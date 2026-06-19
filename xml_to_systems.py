@@ -51,12 +51,12 @@ def _read_mxl(mxl_path: str) -> str:
 
 def _force_system_layout(xml_str: str, measures_per_system: list[int]) -> str:
     """
-    MusicXML에 <print new-system="yes"/>를 삽입해 단 레이아웃을 강제합니다.
+    MusicXML에 <print new-page="yes"/>를 삽입해 페이지(=단) 레이아웃을 강제합니다.
     measures_per_system = [6, 6, 5, 4, 5, 6] 형태로 각 단의 마디 수를 받습니다.
 
-    ET 직렬화 대신 문자열 조작을 사용해 XML 선언/DOCTYPE을 원본 그대로 보존합니다.
+    breaks="encoded" 옵션 사용 시 new-page가 작동하고 new-system은 무시됨.
+    ET 직렬화 대신 문자열 조작으로 XML 선언/DOCTYPE을 원본 그대로 보존합니다.
     """
-    # ET로는 오직 measure 번호 목록만 읽음 (직렬화하지 않음)
     try:
         root = ET.fromstring(xml_str)
     except ET.ParseError:
@@ -71,7 +71,7 @@ def _force_system_layout(xml_str: str, measures_per_system: list[int]) -> str:
     if total == 0:
         return xml_str
 
-    # 시스템 브레이크가 필요한 0-based 인덱스 계산
+    # 페이지 브레이크가 필요한 0-based 인덱스 계산
     break_indices: set[int] = set()
     cumsum = 0
     for count in measures_per_system[:-1]:
@@ -89,21 +89,17 @@ def _force_system_layout(xml_str: str, measures_per_system: list[int]) -> str:
         if num:
             break_numbers.add(num)
 
-    # ── 문자열 조작으로 원본 XML 수정 ──────────────────────────────
     result = xml_str
 
-    # 1. 기존 new-system 단독 print 요소 제거
-    result = re.sub(r'[ \t]*<print\s+new-system="yes"\s*/>\s*', '', result)
-    result = re.sub(r'[ \t]*<print\s+new-system="yes"\s*></print>\s*', '', result)
-    # 2. 다른 속성과 함께 있는 new-system 속성만 제거
-    result = re.sub(r'\s+new-system="yes"', '', result)
+    # 기존 page/system 브레이크 제거
+    result = re.sub(r'[ \t]*<print\s+new-(?:page|system)="yes"\s*/>\s*', '', result)
+    result = re.sub(r'[ \t]*<print\s+new-(?:page|system)="yes"\s*></print>\s*', '', result)
+    result = re.sub(r'\s+new-(?:page|system)="yes"', '', result)
 
-    # 3. 해당 마디 여는 태그 직후에 <print new-system="yes"/> 삽입
+    # 해당 마디 여는 태그 직후에 <print new-page="yes"/> 삽입
     for num in break_numbers:
-        # <measure number="7"> 또는 <measure number="7" width="123.45">
         pattern = rf'(<measure\b[^>]*\bnumber="{re.escape(num)}"[^>]*>)'
-        replacement = r'\1<print new-system="yes"/>'
-        result = re.sub(pattern, replacement, result, count=1)
+        result = re.sub(pattern, r'\1<print new-page="yes"/>', result, count=1)
 
     return result
 
