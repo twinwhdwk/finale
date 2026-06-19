@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "vscode-edge-devtools.debug",
+            "name": "Edge DevTools로 현재 파일 열기",
+            "request": "launch",
+            "file": "${file}"
+        }
+    ]
+}
