@@ -2,6 +2,35 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 입력 데이터 특성 (중요 — OMR 알고리즘 설계의 전제 조건)
+
+- **출처**: 출판사로부터 입수한 **디지털 PDF** (스캔본이 아님). 노이즈, 기울어짐(skew),
+  그림자, 종이 질감 등이 사실상 없다고 가정 가능. Deskewing/Dewarping/디노이징처럼
+  "지저분한 스캔"을 전제로 한 전처리 기법은 이 데이터에는 불필요하거나 효과가 미미함.
+- **악보 난이도**: 중·고등학생 음악 교과서 수준. 복잡한 다성 오케스트라 악보가 아님.
+- **성부 수**: **이성부(2성부) 이하**. 단선율이거나 소프라노/알토 2성부 정도까지만 존재.
+  화성학적으로 복잡한 화음 진행이나 다중 보표(그랜드 스태프) 케이스는 거의 없음.
+- **이 조건이 의미하는 것**: 범용 OMR(임의의 손글씨·사진·복잡한 오케스트라 악보까지
+  다루는)에 필요한 견고성(robustness)은 여기서 우선순위가 낮다. 대신 "깨끗한 디지털
+  인쇄물 + 단순한 성부 구조"라는 좁고 명확한 도메인에 특화된 정밀도를 높이는 쪽이 ROI가
+  훨씬 높다. OpenCV 알고리즘 튜닝 시 이 가정을 적극 활용할 것 (예: 임계값을 노이즈
+  대응용으로 보수적으로 잡을 필요 없음, 오선/음표 형태가 폰트 단위로 일관적이라는
+  가정 활용 가능).
+
+## OMR 엔진 방향 (homr는 보류)
+
+- **homr(`homr_runner.py`)는 현재 사용하지 않음 (보류 상태).** 애초 도입 동기가
+  "Audiveris보다 정교한 인식"이었으나, homr 0.6.2가 슬러/타이 인식 결과를 MusicXML
+  출력에서 의도적으로 비활성화한 상태임을 확인 (TODO 섹션 참고). 이 문제가 해결되지
+  않는 한 GPU/모델 다운로드 비용을 들여 쓸 이유가 약함. **GPU 환경이 갖춰지고 homr가
+  업데이트되어 타이 출력이 복원되면 재검토.** 코드는 그대로 보존하되 기본 워크플로우
+  (`main.py full`, `python main.py run`)에서는 Audiveris만 사용.
+- **현재 핵심 방향: Audiveris(OMR) + OpenCV 전/후처리 정밀도 향상.**
+  위 "입력 데이터 특성"에 맞춰 `pdf_parser.py`의 오선/마디선 감지, 그리고 향후
+  음표(4분/8분/16분/2분/온음표 등 모든 음가) 인식 보조 로직을 OpenCV로 강화하는 데
+  집중한다. 목표는 "Audiveris가 놓치는 부분을 OpenCV 후처리로 보강"이지, Audiveris를
+  대체하는 새 OMR 엔진을 처음부터 만드는 것이 아님.
+
 ## Commands
 
 ```bash
@@ -150,21 +179,19 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
   1. ✅ `xml_comparator.py`에 PDF측 `el.tie` 직접 비교 로직 추가 완료
      (`tie_missing`/`tie_extra` kind 신설, `tests/test_tie_comparison.py`로 검증)
   2. ✅ 인접 동일음높이 음표 합산 비교(`_detect_split_tie`) 추가 완료
-  3. `homr` 엔진 연동(`homr_runner.py`)을 Audiveris 대안으로 추가했으나,
-     **homr 0.6.2(PyPI)는 slur/tie를 MusicXML에 출력하지 않도록 의도적으로
-     비활성화되어 있음** (`build_note_chord()` 내 "Disabled slurs and ties
-     until the detection is more robust" 주석, 호출부 주석 처리됨).
-     → 현재 버전으로는 이음줄 개선 목적 달성 불가. `compare-engines`
-       커맨드는 음높이/리듬 정확도 비교용으로만 유효.
-     → GitHub `liebharc/homr` main 브랜치가 이후 업데이트되어 이 기능이
-       풀렸는지 재확인 필요 (이 저장소 작업 시점엔 PyPI 0.6.2만 검증함,
-       컨테이너 네트워크 제약으로 모델 다운로드/실제 추론 테스트는 못 함).
-  - **권장 다음 단계**: 실제 Audiveris 변환 결과(`Finale_Ref/xmls_converted/`)로
-    1·2번 로직을 검증 — 지금까지는 music21로 합성한 가짜 시나리오로만
-    테스트함 (`tests/test_tie_comparison.py`). 실제 교과서 PDF 1개로
+  3. ⏸️ **보류**: `homr` 엔진 연동(`homr_runner.py`)을 Audiveris 대안으로
+     추가했으나, **homr 0.6.2(PyPI)는 slur/tie를 MusicXML에 출력하지 않도록
+     의도적으로 비활성화되어 있음** (`build_note_chord()` 내 "Disabled
+     slurs and ties until the detection is more robust" 주석, 호출부
+     주석 처리됨). GPU 비용 대비 이득이 없어 보류 결정 (상단 "OMR 엔진
+     방향" 참고). GPU 환경 구축 + homr 쪽 타이 출력 복원 시 재검토.
+  - **현재 권장 방향**: 1·2번(순수 XML 후처리)을 실제 Audiveris 결과로
+    검증 — 지금까지는 music21로 합성한 가짜 시나리오로만 테스트함
+    (`tests/test_tie_comparison.py`). 실제 교과서 PDF 1개로
     `python main.py full --pdf ... --orig ...` 돌려서 `tie_missing`/
     `tie_suspect` 건수가 실제 채보 오류와 맞는지 사람이 확인 필요.
-    homr는 모델 다운로드 가능한 로컬 PC에서 실측 후 재평가.
+    병행해서 OpenCV 기반 음표/오선 인식 정밀도를 높이는 작업(아래 신규
+    섹션) 진행.
 
 - `homr_runner.py`: ✅ 다중 페이지 PDF의 페이지별 결과(.musicxml) 병합 비교 구현 완료
   (`merge_page_musicxmls()` - 마디 번호 1부터 재부여하여 단일 합본 XML 생성,
@@ -172,6 +199,7 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
   `tests/test_homr_merge.py`로 검증 (실제 모델 없이 가짜 페이지 XML로 테스트).
   알려진 한계: 페이지 경계에서 조표/박자표가 실제로 바뀌는 악보는 부정확할 수 있음
   (단순 이어붙이기라 attributes 재선언을 하지 않음) - 실측 필요.
+  ⏸️ 코드는 완성 상태로 보존하되 **사용은 보류** (상단 "OMR 엔진 방향" 참고).
 
 - **정리 후보 (삭제하지 않고 보류, 본인 확인 필요)**:
   - `check_pdf.py`: 최초 커밋(`f065f7b`) 이후 한 번도 수정 안 된 초기
@@ -184,8 +212,9 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
     미사용"이라 명시됨. `xml_to_systems.py`(verovio 경로)로 대체된 듯.
     실제 사용 여부 확인 후 정리 검토.
 
-- `homr_runner.py`: 실제 모델 다운로드/추론을 거친 통합 테스트 아직 없음
-  (이 컨테이너는 `release-assets.githubusercontent.com`이 네트워크
-  화이트리스트에 없어 `homr --init` 모델 다운로드 불가). 로컬 PC에서
+- `homr_runner.py`: ⏸️ 보류 상태라 우선순위 낮음. 실제 모델 다운로드/추론을
+  거친 통합 테스트는 아직 없음 (이 컨테이너는
+  `release-assets.githubusercontent.com`이 네트워크 화이트리스트에 없어
+  `homr --init` 모델 다운로드 불가). GPU 환경 구축 후 재검토 시
   `homr --init` 후 `python main.py compare-engines --pdf ... --orig ...`
-  실행 결과로 검증 필요.
+  실행 결과로 검증.
