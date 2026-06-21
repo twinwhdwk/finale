@@ -25,11 +25,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   않는 한 GPU/모델 다운로드 비용을 들여 쓸 이유가 약함. **GPU 환경이 갖춰지고 homr가
   업데이트되어 타이 출력이 복원되면 재검토.** 코드는 그대로 보존하되 기본 워크플로우
   (`main.py full`, `python main.py run`)에서는 Audiveris만 사용.
-- **현재 핵심 방향: Audiveris(OMR) + OpenCV 전/후처리 정밀도 향상.**
-  위 "입력 데이터 특성"에 맞춰 `pdf_parser.py`의 오선/마디선 감지, 그리고 향후
-  음표(4분/8분/16분/2분/온음표 등 모든 음가) 인식 보조 로직을 OpenCV로 강화하는 데
-  집중한다. 목표는 "Audiveris가 놓치는 부분을 OpenCV 후처리로 보강"이지, Audiveris를
-  대체하는 새 OMR 엔진을 처음부터 만드는 것이 아님.
+- **현재 핵심 방향: `note_recognition/` 패키지 — Audiveris를 쓰지 않는 자체 OpenCV
+  음표 인식기.** 위 "입력 데이터 특성"(디지털 PDF, 2성부 이하, 중고등학생 수준)을
+  적극 활용해, 범용 OMR이 아닌 좁은 도메인 특화 인식기를 새로 구축 중. 목표 음가:
+  온음표/2분음표/4분음표/8분음표/16분음표(+ 부속 점음표·쉼표는 추후).
+
+  **진행 상황** (단계별로 `tests/test_*.py`에서 검증):
+  1. ✅ **합성 테스트 이미지 생성기** (`tests/fixtures/synthetic_score.py`):
+     실제 PDF 없이도 ground truth가 100% 확실한 검증용 악보 이미지를 직접
+     렌더링. 표준 음표 모양(채워진/빈 머리, 기둥, 깃발, 덧줄)을 OpenCV로
+     그려 5종 음가(whole/half/quarter/eighth/sixteenth) 전부 생성 가능.
+  2. ✅ **오선 제거** (`note_recognition/staff_removal.py`):
+     `detect_staff_line_thickness()` - 오선 한 줄의 실제 두께를 run-length
+     최빈값으로 측정 (버그 이력: run 시작점이 아닌 모든 y에서 재측정해
+     최빈값이 항상 실제보다 작게 나오던 버그 발견·수정함, 두께 3을 1로
+     오판했었음).
+     `remove_staff_lines()` - 2단계 검증(가로 연속성 → 세로 run-length)으로
+     오선만 정밀 제거. 1차 구현(세로 run-length만 사용)은 빈 음표머리(2분/
+     온음표)의 타원 테두리가 오선과 두께가 비슷해 통째로 지워지는 회귀가
+     실험으로 발견되어, 가로 연속성 기준을 추가해 해결. `tests/test_staff_removal.py`
+     6개로 검증 (빈 영역 100% 제거, 채워진 머리 보존율 ≥70%, 빈 머리가
+     오선으로 오인되지 않음, 5종 음가 전부 생존 확인).
+  3. ⬜ **미착수**: 음표 객체 분리 (오선 제거 후 연결성분 분석으로 개별
+     음표 단위 분리), 머리 모양 분류(채워짐 vs 빔, cv2.contourArea나
+     내부 픽셀 밀도 활용), 기둥/깃발 검출 및 개수로 음가 판정, 오선 기준
+     y좌표 → 음높이(pitch) 매핑, 최종 MusicXML 생성(music21 또는 직접
+     빌드).
 
 ## Commands
 
@@ -58,8 +79,11 @@ python main.py config
 # Audiveris vs homr 엔진 비교 (음높이/리듬 정확도 대조용, 타이는 homr가 미지원)
 python main.py compare-engines --pdf score.pdf --orig original.mxl
 
-# 단위 테스트 (xml_comparator 타이 비교 로직)
+# 단위 테스트 (xml_comparator 타이 비교, 음표 인식 등 전체)
 python -m pytest tests/ -v
+
+# 합성 악보 이미지 직접 생성해서 눈으로 확인 (디버깅용)
+python tests/fixtures/synthetic_score.py
 ```
 
 ## 데이터 경로 (config.ini)
