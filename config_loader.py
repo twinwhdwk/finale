@@ -50,6 +50,22 @@ def get_audiveris_path() -> str:
     )
 
 
+def get_homr_path() -> str:
+    """homr 실행 파일 경로. 비어있으면 PATH에서 탐색하도록 빈 문자열 반환."""
+    cfg = load()
+    return cfg.get("homr", "path", fallback="").strip()
+
+
+def get_homr_dpi() -> int:
+    cfg = load()
+    return cfg.getint("homr", "dpi", fallback=300)
+
+
+def get_homr_gpu() -> str:
+    cfg = load()
+    return cfg.get("homr", "gpu", fallback="auto")
+
+
 def get_part_index() -> int:
     cfg = load()
     return cfg.getint("options", "part_index", fallback=0)
@@ -67,5 +83,8 @@ def print_config() -> None:
     print(f"  변환 저장 폴더: {paths['converted_xml_dir']}")
     print(f"  리포트 폴더:    {paths['report_dir']}")
     print(f"  Audiveris:      {get_audiveris_path()}")
+    homr_path = get_homr_path()
+    print(f"  homr:           {homr_path if homr_path else '(PATH에서 자동 탐색)'}  "
+          f"dpi={get_homr_dpi()} gpu={get_homr_gpu()}")
     print(f"  파트 인덱스:    {get_part_index()}")
     print("=" * 50)

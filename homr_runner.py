@@ -41,12 +41,26 @@ from pathlib import Path
 
 
 def _homr_cmd() -> str:
+    """homr 실행 파일 경로를 결정합니다.
+
+    우선순위: config.ini [homr] path 명시값 > PATH 자동 탐색.
+    (pdf_to_xml._audiveris_cmd()와 동일한 우선순위 패턴)
+    """
+    try:
+        from config_loader import get_homr_path
+        configured = get_homr_path()
+        if configured:
+            return configured
+    except ImportError:
+        pass
+
     found = shutil.which("homr")
     if not found:
         raise RuntimeError(
             "homr를 찾을 수 없습니다.\n"
             "  pip install homr\n"
-            "  homr --init   (모델 최초 다운로드, 인터넷 필요)"
+            "  homr --init   (모델 최초 다운로드, 인터넷 필요)\n"
+            "PATH에 없다면 config.ini [homr] path 에 실행 파일 절대경로를 지정하세요."
         )
     return found
 
@@ -79,7 +93,7 @@ def _pdf_to_page_images(pdf_path: str, output_dir: Path, dpi: int = 300) -> list
     return page_images
 
 
-def _run_homr_on_image(image_path: Path, gpu: str = "auto", extra_args: list[str] | None = None) -> Path:
+def _run_homr_on_image(image_path: Path, extra_args: list[str] | None = None) -> Path:
     """단일 이미지에 homr 실행 → {image_stem}.musicxml 경로 반환."""
     cmd = [_homr_cmd(), str(image_path)]
     if extra_args:
@@ -154,6 +168,7 @@ def convert_pdf_to_xml(
     output_dir: str,
     dpi: int = 300,
     gpu: str = "auto",
+    keep_page_images: bool = True,
 ) -> list[str]:
     """
     PDF 파일을 페이지별로 homr를 통해 MusicXML로 변환합니다.
@@ -162,11 +177,16 @@ def convert_pdf_to_xml(
     main.py에서 엔진을 교체 가능하도록 맞춤.
 
     Args:
-        pdf_path:   원본 PDF 경로
-        output_dir: 변환 결과(.musicxml) 및 중간 PNG 저장 폴더
-        dpi:        PDF → PNG 렌더링 해상도 (homr는 사진 기반이라
-                    Audiveris(600dpi 권장)보다 낮아도 무방, 기본 300)
-        gpu:        "auto" | "force" | "off" (homr --gpu 옵션과 동일)
+        pdf_path:         원본 PDF 경로
+        output_dir:       변환 결과(.musicxml) 및 중간 PNG 저장 폴더
+        dpi:              PDF → PNG 렌더링 해상도 (homr는 사진 기반이라
+                          Audiveris(600dpi 권장)보다 낮아도 무방, 기본 300)
+        gpu:              "auto" | "force" | "no" (homr --gpu 옵션의 실제
+                          choices와 동일해야 함 - homr.main.GpuSupport enum
+                          값 기준. "off"가 아니라 "no"이므로 주의)
+        keep_page_images: False면 변환 후 중간 PNG를 삭제 (배치 처리 시
+                          디스크 누적 방지). 기본 True (디버깅 시 페이지별
+                          이미지를 직접 확인할 수 있도록 보존).
 
     Returns:
         변환된 .musicxml 파일 경로 목록 (페이지 순서대로)
@@ -193,10 +213,13 @@ def convert_pdf_to_xml(
     for i, img in enumerate(page_images):
         print(f"    페이지 {i+1}/{len(page_images)}: {img.name}")
         try:
-            xml_path = _run_homr_on_image(img, gpu=gpu, extra_args=extra_args)
+            xml_path = _run_homr_on_image(img, extra_args=extra_args)
             results.append(str(xml_path))
         except RuntimeError as e:
             print(f"    건너뜀: {e}")
+        finally:
+            if not keep_page_images:
+                img.unlink(missing_ok=True)
 
     print(f"[homr 변환 완료] {pdf_path.name} - {len(results)}/{len(page_images)} 페이지 성공")
     return results

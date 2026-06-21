@@ -33,15 +33,6 @@ from xml_comparator import compare
 from report_generator import print_console, save_html
 
 
-def _get_converter(engine: str):
-    """엔진 이름에 따라 convert_pdf_to_xml 함수를 선택합니다."""
-    if engine == "homr":
-        from homr_runner import convert_pdf_to_xml
-        return convert_pdf_to_xml
-    from pdf_to_xml import convert_pdf_to_xml
-    return convert_pdf_to_xml
-
-
 def _convert_and_resolve_single_xml(pdf_path: str, conv_dir: str, engine: str) -> str | None:
     """
     PDF를 지정 엔진으로 변환하고, xml_comparator.compare()가 바로 쓸 수 있는
@@ -50,9 +41,16 @@ def _convert_and_resolve_single_xml(pdf_path: str, conv_dir: str, engine: str) -
     audiveris: 보통 결과가 1개라 그대로 반환.
     homr:      페이지별로 여러 .musicxml이 나오므로, 2개 이상이면
                homr_runner.merge_page_musicxmls()로 병합한 합본을 반환.
+               dpi/gpu는 config.ini [homr] 섹션 값을 사용.
     """
-    convert_pdf_to_xml = _get_converter(engine)
-    xml_paths = convert_pdf_to_xml(pdf_path, conv_dir)
+    if engine == "homr":
+        from homr_runner import convert_pdf_to_xml
+        dpi = config_loader.get_homr_dpi()
+        gpu = config_loader.get_homr_gpu()
+        xml_paths = convert_pdf_to_xml(pdf_path, conv_dir, dpi=dpi, gpu=gpu)
+    else:
+        from pdf_to_xml import convert_pdf_to_xml
+        xml_paths = convert_pdf_to_xml(pdf_path, conv_dir)
 
     if not xml_paths:
         return None
