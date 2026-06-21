@@ -60,6 +60,8 @@ _KIND_META = {
     "duration":     ("note",  "medium", "음길이 오류",  "#fb8c00"),
     "type":         ("note",  "medium", "형식 오류",    "#f4511e"),
     "tie_suspect":  ("note",  "low",    "붙임줄 의심",  "#8e24aa"),
+    "tie_missing":  ("note",  "high",   "붙임줄 누락",  "#6a1b9a"),
+    "tie_extra":    ("note",  "medium", "붙임줄 오인식", "#ab47bc"),
     "measure_miss": ("note",  "high",   "마디 누락",    "#b71c1c"),
     "missing":      ("note",  "medium", "OMR 누락",     "#ef6c00"),
     "noise":        ("note",  "low",    "OMR 노이즈",   "#9e9e9e"),

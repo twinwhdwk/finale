@@ -349,11 +349,23 @@ def cmd_compare_engines(args):
 
     _row("총 불일치", lambda r: len(r.discrepancies))
     _row("음표 오류",   lambda r: r.note_errors)
+    _row("  타이 누락", lambda r: r.tie_missing_count)
+    _row("  타이 오인식", lambda r: r.tie_extra_count)
     _row("  타이 의심", lambda r: r.tie_suspect_count)
     _row("  OMR 누락",  lambda r: r.missing_count)
     _row("  OMR 노이즈", lambda r: r.noise_count)
     _row("코드 오류",   lambda r: r.chord_errors)
     _row("가사 오류",   lambda r: r.lyric_errors)
+
+    if results.get("homr") is not None:
+        print(
+            "\n[참고] homr(현재 0.6.2)는 슬러/타이 인식 결과를 MusicXML에 "
+            "출력하지 않도록 비활성화되어 있습니다 (homr 소스 내 'Disabled "
+            "slurs and ties until the detection is more robust' 주석 참조).\n"
+            "homr의 '타이 의심' 건수는 항상 0에 가깝게 나올 수 있으니 "
+            "이 항목만으로 엔진 우열을 판단하지 마세요. 음높이/리듬 정확도 "
+            "비교 용도로만 활용하세요."
+        )
 
 
 # ── config 확인 ───────────────────────────────────────────────────────

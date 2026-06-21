@@ -26,6 +26,8 @@ KIND_LABELS = {
     "duration":     "[음길이 오류]",
     "type":         "[형식 오류]",
     "tie_suspect":  "[붙임줄 의심]",
+    "tie_missing":  "[붙임줄 누락]",
+    "tie_extra":    "[붙임줄 오인식]",
     "measure_miss": "[마디 누락]",
     "missing":      "[누락]",
     "noise":        "[노이즈]",
@@ -65,13 +67,17 @@ class CompareResult:
         return sum(1 for d in self.discrepancies if d.kind in kinds)
 
     @property
-    def note_errors(self)      -> int: return self._by_kind("pitch", "duration", "type", "tie_suspect")
+    def note_errors(self)      -> int: return self._by_kind("pitch", "duration", "type", "tie_suspect", "tie_missing", "tie_extra")
     @property
     def missing_count(self)    -> int: return self._by_kind("missing")
     @property
     def noise_count(self)      -> int: return self._by_kind("noise")
     @property
     def tie_suspect_count(self)-> int: return self._by_kind("tie_suspect")
+    @property
+    def tie_missing_count(self)-> int: return self._by_kind("tie_missing")
+    @property
+    def tie_extra_count(self)  -> int: return self._by_kind("tie_extra")
     @property
     def measure_miss_count(self)-> int: return self._by_kind("measure_miss")
     @property
@@ -205,9 +211,132 @@ def _dur_eq(a: float, b: float) -> bool:
     return abs(a - b) <= _DUR_TOLERANCE
 
 
+def _tied_orig_group(measure_orig, start_offset: float, voice_index: int | None) -> tuple[float, str] | None:
+    """
+    원본 마디에서 start_offset에 시작하는 타이 그룹(연속된 동일음높이 tie 체인)을 찾아
+    (총 길이, 음높이) 반환. 타이 그룹이 아니면 None.
+    """
+    data = _note_dict(measure_orig, voice_index)
+    if start_offset not in data:
+        return None
+    first = data[start_offset][0]
+    if not isinstance(first, note.Note) or not _is_tied_start(first):
+        return None
+
+    pitch = first.nameWithOctave
+    total = float(first.quarterLength)
+    cur = first
+    cur_offset = start_offset
+    offsets_sorted = sorted(data.keys())
+
+    while _tie_type(cur) in ('start', 'continue'):
+        # 다음 offset의 음표 탐색
+        idx = offsets_sorted.index(cur_offset)
+        if idx + 1 >= len(offsets_sorted):
+            break
+        next_offset = offsets_sorted[idx + 1]
+        next_el = data[next_offset][0]
+        if not isinstance(next_el, note.Note) or next_el.nameWithOctave != pitch:
+            break
+        total += float(next_el.quarterLength)
+        cur = next_el
+        cur_offset = next_offset
+        if _tie_type(cur) == 'stop':
+            break
+
+    return (round(total, 6), pitch)
+
+
+def _sum_pdf_consecutive_same_pitch(measure_pdf, start_offset: float, pitch: str,
+                                     target_total: float, voice_index: int | None) -> tuple[float, int] | None:
+    """
+    PDF 마디에서 start_offset부터 동일 음높이(pitch)가 연속되는 음표들의
+    quarterLength를 target_total에 도달(또는 근접)할 때까지 합산.
+    합산값이 target_total과 허용오차 내로 일치하면 (합산값, 사용된 음표 개수) 반환,
+    아니면 None.
+    """
+    data = _note_dict(measure_pdf, voice_index)
+    offsets_sorted = sorted(data.keys())
+    if start_offset not in offsets_sorted:
+        return None
+
+    total = 0.0
+    count = 0
+    idx = offsets_sorted.index(start_offset)
+    for o in offsets_sorted[idx:]:
+        el = data[o][0]
+        if not isinstance(el, note.Note) or el.nameWithOctave != pitch:
+            break
+        total += float(el.quarterLength)
+        count += 1
+        if _dur_eq(round(total, 6), target_total):
+            return (round(total, 6), count)
+        if total > target_total + _DUR_TOLERANCE:
+            break
+    return None
+
+
+def _detect_split_tie(measure_pdf, measure_orig, m_num: int, voice_index: int | None) -> list[Discrepancy]:
+    """
+    원본의 타이 그룹(긴 음 하나)이 PDF 추출본에서 같은 음높이의 짧은 음표
+    여러 개로 쪼개져 인식된 경우를 탐지한다 (Audiveris가 타이를 못 읽고
+    음표를 분리 인식하는 전형적 패턴).
+
+    _compare_notes의 tie_missing은 "타이 시작점 offset에 음표가 있는데
+    tie 속성만 빠진 경우"만 잡으므로, 이 함수는 그보다 더 일반적으로
+    "합산 길이가 맞으면 분할 인식으로 본다"는 보강 신호를 추가한다.
+    """
+    errors = []
+    data_orig = _note_dict(measure_orig, voice_index)
+
+    for offset, els in data_orig.items():
+        first = els[0]
+        if not isinstance(first, note.Note) or not _is_tied_start(first):
+            continue
+
+        group = _tied_orig_group(measure_orig, offset, voice_index)
+        if group is None:
+            continue
+        target_total, pitch = group
+        if target_total <= float(first.quarterLength) + _DUR_TOLERANCE:
+            continue  # 타이 그룹이 음표 1개뿐이면 분할 의심 대상 아님
+
+        sum_result = _sum_pdf_consecutive_same_pitch(measure_pdf, offset, pitch, target_total, voice_index)
+        if sum_result is None:
+            continue
+        pdf_total, pdf_note_count = sum_result
+
+        # PDF측이 동일 offset에서 음표 1개만으로 길이가 일치한 경우는
+        # _compare_notes()(같은 offset 직접 비교: tie_missing/tie_suspect/duration)가
+        # 이미 처리하므로, 여기서는 "2개 이상으로 쪼개진" 진짜 분할 케이스만 보고한다.
+        if pdf_note_count < 2:
+            continue
+
+        # false positive 방지: PDF측 시작 음표가 이미 tie_start이면
+        # Audiveris가 타이를 정상 인식한 것(=원본과 똑같이 여러 음표가 타이로
+        # 묶여 있을 뿐 분할 오인식이 아님)이므로 보고하지 않는다.
+        data_pdf = _note_dict(measure_pdf, voice_index)
+        pdf_first = data_pdf.get(offset, [None])[0]
+        if isinstance(pdf_first, note.Note) and _is_tied_start(pdf_first):
+            continue
+
+        errors.append(Discrepancy(
+            "tie_suspect", m_num, offset,
+            f"붙임줄 분할 인식 의심 - 원본 '{pitch}' 타이 그룹({target_total}박)이 "
+            f"PDF 추출본에서 음표 {pdf_note_count}개로 분리 인식됨 (합산 {pdf_total}박 일치)"
+        ))
+    return errors
+
+
 def _is_tied_start(el) -> bool:
     """음표가 타이의 시작 또는 연속 노트인지 확인 (타이 길이 합산 필요 신호)"""
     return getattr(el, 'tie', None) is not None and el.tie.type in ('start', 'continue')
+
+
+def _tie_type(el) -> str | None:
+    """음표의 tie 상태를 반환 ('start'/'continue'/'stop' 중 하나, 없으면 None)."""
+    t = getattr(el, 'tie', None)
+    return t.type if t is not None else None
 
 
 def _compare_notes(el_pdf, el_orig, m: int, offset: float) -> list[Discrepancy]:
@@ -223,11 +352,28 @@ def _compare_notes(el_pdf, el_orig, m: int, offset: float) -> list[Discrepancy]:
             errors.append(Discrepancy("pitch", m, offset,
                 f"음높이 틀림 - PDF: {el_pdf.nameWithOctave}, 원본: {el_orig.nameWithOctave}"))
 
+        # ── 타이 직접 비교 (PDF측 el.tie를 사후 추정이 아닌 실측으로 사용) ──
+        pdf_tie_start  = _is_tied_start(el_pdf)
+        orig_tie_start = _is_tied_start(el_orig)
+        if orig_tie_start and not pdf_tie_start:
+            errors.append(Discrepancy("tie_missing", m, offset,
+                f"붙임줄 인식 실패 - 원본은 타이로 연결되나 PDF 추출본은 타이 없음 "
+                f"({el_orig.nameWithOctave}, 원본 타이: {_tie_type(el_orig)})"))
+        elif pdf_tie_start and not orig_tie_start:
+            errors.append(Discrepancy("tie_extra", m, offset,
+                f"붙임줄 오인식 - PDF 추출본에만 타이 존재 (원본엔 없음) "
+                f"({el_pdf.nameWithOctave}, PDF 타이: {_tie_type(el_pdf)})"))
+
         pdf_dur  = round(float(el_pdf.quarterLength), 6)
         orig_dur = round(float(el_orig.quarterLength), 6)
         if not _dur_eq(pdf_dur, orig_dur):
             pitch_match = el_pdf.nameWithOctave == el_orig.nameWithOctave
-            if pitch_match or _is_tied_start(el_orig):
+            # 위에서 이미 tie_missing/tie_extra로 명확히 분류된 경우는
+            # 더 구체적인 정보이므로 모호한 tie_suspect를 중복 추가하지 않는다.
+            already_tie_flagged = (orig_tie_start and not pdf_tie_start) or (pdf_tie_start and not orig_tie_start)
+            if already_tie_flagged:
+                pass
+            elif pitch_match or _is_tied_start(el_orig):
                 # 음높이가 같거나 원본에 타이가 있으면 붙임줄/이음줄 오인식 의심
                 errors.append(Discrepancy("tie_suspect", m, offset,
                     f"길이 다름 (붙임줄/이음줄 오인식 가능성) "
@@ -323,6 +469,12 @@ def compare(
         data_pdf  = _note_dict(measures_pdf[idx],  voice_index)
         data_orig = _note_dict(measures_orig[idx], voice_index)
         all_offsets = sorted(set(data_pdf) | set(data_orig))
+
+        # 합산 비교: 원본 타이 그룹이 PDF에서 분할 인식됐는지 보강 탐지.
+        # (offset이 정확히 일치하지 않는 음표쌍까지 다루므로 위 루프와 별도 실행)
+        for d in _detect_split_tie(measures_pdf[idx], measures_orig[idx], m_num, voice_index):
+            d.track = "note"
+            result.discrepancies.append(d)
 
         for offset in all_offsets:
             in_pdf  = offset in data_pdf

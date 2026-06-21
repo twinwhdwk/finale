@@ -119,3 +119,30 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
 ## TODO (미구현)
 
 - HTML 리포트에서 오류 클릭 시 PDF 원본 위치 하이라이트 (bbox 좌표 필요, 설계 문서: `~/.claude/projects/.../todo_pdf_highlight.md`)
+  - 참고: `pdf_parser.StaffZone`에 `top_y`/`bot_y`/`barlines`(x좌표)가 있어 마디 단위 bbox 추정은 가능. 음표 단위 정밀 좌표는 Audiveris 결과에 없어 별도 트랙 필요.
+
+- **이음줄(tie/slur) 인식 개선** — 진행 중, 막힌 지점 정리:
+  1. `xml_comparator.py`의 `tie_suspect` 판정은 PDF측 `el.tie`를 직접 비교하지 않고
+     duration 불일치로부터 사후 추정만 함 → **PDF측 tie 속성 직접 비교 로직 추가 필요** (미착수)
+  2. Audiveris가 타이 음표를 두 개로 쪼개 인식하는 경우를 잡기 위한
+     "인접 동일음높이 음표 합산 비교" 로직 추가 필요 (미착수)
+  3. `homr` 엔진 연동(`homr_runner.py`)을 Audiveris 대안으로 추가했으나,
+     **homr 0.6.2(PyPI)는 slur/tie를 MusicXML에 출력하지 않도록 의도적으로
+     비활성화되어 있음** (`build_note_chord()` 내 "Disabled slurs and ties
+     until the detection is more robust" 주석, 호출부 주석 처리됨).
+     → 현재 버전으로는 이음줄 개선 목적 달성 불가. `compare-engines`
+       커맨드는 음높이/리듬 정확도 비교용으로만 유효.
+     → GitHub `liebharc/homr` main 브랜치가 이후 업데이트되어 이 기능이
+       풀렸는지 재확인 필요 (이 저장소 작업 시점엔 PyPI 0.6.2만 검증함,
+       컨테이너 네트워크 제약으로 모델 다운로드/실제 추론 테스트는 못 함).
+  - **권장 다음 단계**: 1, 2번(순수 XML 후처리, Audiveris 결과만으로 가능)부터
+    먼저 구현. homr는 모델 다운로드 가능한 로컬 PC에서 실측 후 재평가.
+
+- `homr_runner.py`: 다중 페이지 PDF의 페이지별 결과(.musicxml) 병합 비교 미구현.
+  현재 `compare-engines`/`full --engine homr`는 첫 페이지만 비교에 사용.
+
+- `homr_runner.py`: 실제 모델 다운로드/추론을 거친 통합 테스트 아직 없음
+  (이 컨테이너는 `release-assets.githubusercontent.com`이 네트워크
+  화이트리스트에 없어 `homr --init` 모델 다운로드 불가). 로컬 PC에서
+  `homr --init` 후 `python main.py compare-engines --pdf ... --orig ...`
+  실행 결과로 검증 필요.

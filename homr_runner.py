@@ -2,8 +2,23 @@
 PDF 악보 → MusicXML 변환 모듈 (homr OMR 엔진 연동)
 
 Audiveris(pdf_to_xml.py)의 대안/병행 비교용 엔진.
-딥러닝 기반(UNet 분할 + Transformer 시퀀스 인식)이라 이음줄/슬러 등
-아티큘레이션 인식에서 Audiveris와 다른 특성을 보일 수 있다.
+딥러닝 기반(UNet 분할 + Transformer 시퀀스 인식)이라 음표(pitch/duration)
+인식 특성이 Audiveris와 다를 수 있어 정확도 비교 대상으로 유효하다.
+
+⚠️ 중요 (2026-06 기준, homr 0.6.2 PyPI 릴리스 확인):
+    이음줄/붙임줄(slur/tie) 인식 결과는 **MusicXML 출력에 포함되지 않는다.**
+    homr/music_xml_generator.py의 build_note_chord()에서 모델이 감지한
+    slur/tie 정보(_slurs_ties)를 XML에 다시 붙이는 코드가
+    "Disabled slurs and ties until the detection is more robust"라는
+    주석과 함께 통째로 비활성화되어 있다 (해당 호출부가 주석 처리됨).
+    즉 homr로 변환한 XML의 모든 음표는 항상 tie=None 이다.
+
+    => 이 프로젝트의 원래 동기였던 "이음줄 인식 개선"에는 현재 버전의
+       homr가 도움이 되지 않는다. compare-engines 커맨드로 얻을 수 있는
+       것은 음높이/리듬(pitch/duration) 정확도 비교뿐이며, tie_suspect
+       비교는 homr 쪽이 항상 0건으로 나와 무의미하다.
+    => 추후 homr 저장소가 업데이트되어 이 비활성화가 풀리면 재검토.
+       (GitHub main 브랜치 직접 확인 필요 - TODO)
 
 설치 필요:
     pip install homr
