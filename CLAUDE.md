@@ -154,6 +154,17 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
   알려진 한계: 페이지 경계에서 조표/박자표가 실제로 바뀌는 악보는 부정확할 수 있음
   (단순 이어붙이기라 attributes 재선언을 하지 않음) - 실측 필요.
 
+- **정리 후보 (삭제하지 않고 보류, 본인 확인 필요)**:
+  - `check_pdf.py`: 최초 커밋(`f065f7b`) 이후 한 번도 수정 안 된 초기
+    프로토타입. docstring엔 "PaddleOCR" 사용한다고 적혀있지만 실제 코드는
+    EasyOCR을 import함 - 코드와 설명이 어긋난 죽은 스크립트로 보임.
+    `pdf_parser.py`가 사실상 이 로직을 흡수해 정식화한 상태. 개인 경로
+    하드코딩(`C:\Users\강우현\...`)도 포함. 더 이상 안 쓰면 삭제 또는
+    `scratch/`로 이동 권장.
+  - `musescore_renderer.py`: CLAUDE.md 외부 도구 표에도 "미설치, 현재
+    미사용"이라 명시됨. `xml_to_systems.py`(verovio 경로)로 대체된 듯.
+    실제 사용 여부 확인 후 정리 검토.
+
 - `homr_runner.py`: 실제 모델 다운로드/추론을 거친 통합 테스트 아직 없음
   (이 컨테이너는 `release-assets.githubusercontent.com`이 네트워크
   화이트리스트에 없어 `homr --init` 모델 다운로드 불가). 로컬 PC에서
