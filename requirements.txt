@@ -7,5 +7,8 @@ pytesseract>=0.3.10
 easyocr>=1.7.0
 verovio>=4.0.0
 
+# 테스트 실행용 (선택, tests/ 디렉토리 사용 시 필요)
+pytest>=7.0.0
+
 # --engine homr 사용 시에만 필요 (별도 설치: pip install homr && homr --init)
 # homr>=0.6.2
