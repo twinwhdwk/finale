@@ -403,6 +403,55 @@ def parse_all_pages(pdf_path: str, dpi: int = 600) -> list[PageParseResult]:
     return results
 
 
+def iter_absolute_measures(pages: list[PageParseResult]):
+    """
+    여러 페이지의 모든 (오선, 오선 내 마디 번호)를 절대 마디 번호와 함께
+    순서대로 순회하는 이터레이터.
+
+    "페이지를 순서대로 돌면서 zone.measure_count만큼 절대 마디 번호를
+    누산한다"는 규칙이 main._extract_pdf_data()(코드/가사를 절대 마디
+    번호로 변환)와 build_measure_location_map()(마디 자체의 위치를
+    절대 마디 번호로 매핑) 두 곳에서 각각 따로 구현되어 있었다.
+    이 함수와 iter_zones_with_start_measure()가 그 누산 규칙의 단일
+    진실 공급원(single source of truth) 역할을 하도록 양쪽에서 재사용한다.
+
+    Yields:
+        (abs_measure_num, page, zone, measure_in_staff) 튜플.
+        abs_measure_num: 전체 악보 기준 절대 마디 번호 (1부터)
+        page:            해당 PageParseResult
+        zone:            해당 StaffZone
+        measure_in_staff: 오선 내 마디 번호 (1부터, zone.x_to_measure()와 동일 기준)
+    """
+    abs_measure = 1
+    for page in pages:
+        for zone in page.zones:
+            for m_in_staff in range(1, zone.measure_count + 1):
+                yield (abs_measure + m_in_staff - 1, page, zone, m_in_staff)
+            abs_measure += zone.measure_count
+
+
+def iter_zones_with_start_measure(pages: list[PageParseResult]):
+    """
+    여러 페이지의 모든 오선(zone)을, 그 오선이 시작하는 절대 마디 번호와
+    함께 순회하는 이터레이터.
+
+    zone.chords/zone.lyrics처럼 "오선 내 마디 번호"로 이미 인덱싱된
+    데이터를 절대 마디 번호로 변환할 때 사용한다 (이런 데이터는 마디
+    하나하나가 아니라 zone 단위로 들고 있어 iter_absolute_measures와는
+    순회 단위가 다름). iter_absolute_measures()와 동일한 누산 규칙을
+    공유한다.
+
+    Yields:
+        (zone_start_abs_measure, page, zone) 튜플.
+        zone_start_abs_measure: 이 오선의 1번째 마디가 해당하는 절대 마디 번호
+    """
+    abs_measure = 1
+    for page in pages:
+        for zone in page.zones:
+            yield (abs_measure, page, zone)
+            abs_measure += zone.measure_count
+
+
 @dataclass
 class MeasureLocation:
     """절대 마디 번호 1개의 PDF 상 위치 (페이지 + 픽셀 bbox)."""
@@ -442,19 +491,14 @@ def build_measure_location_map(
         {절대_마디_번호: MeasureLocation}
     """
     location_map: dict[int, MeasureLocation] = {}
-    abs_measure = 1
 
-    for page in pages:
-        for zone in page.zones:
-            for m_in_staff in range(1, zone.measure_count + 1):
-                abs_num = abs_measure + m_in_staff - 1
-                bbox = zone.measure_bbox(m_in_staff, page_width)
-                location_map[abs_num] = MeasureLocation(
-                    measure_num=abs_num,
-                    page_num=page.page_num,
-                    staff_index=zone.index,
-                    bbox=bbox,
-                )
-            abs_measure += zone.measure_count
+    for abs_num, page, zone, m_in_staff in iter_absolute_measures(pages):
+        bbox = zone.measure_bbox(m_in_staff, page_width)
+        location_map[abs_num] = MeasureLocation(
+            measure_num=abs_num,
+            page_num=page.page_num,
+            staff_index=zone.index,
+            bbox=bbox,
+        )
 
     return location_map

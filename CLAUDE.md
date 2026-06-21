@@ -136,9 +136,12 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
     연결 - 클릭 시 PDF를 이미지로 보여주고 bbox 위치에 박스를 그리는
     프론트엔드 작업. (2) PDF를 페이지 이미지로 변환해 HTML에 내장하거나
     별도 서빙하는 방식 결정 필요 (base64 inline vs 별도 정적 파일).
-    (3) `main._extract_pdf_data()`를 `build_measure_location_map()` 사용하도록
-    리팩터링해 로직 중복 제거 (현재는 같은 절대 마디 번호 누산 코드가
-    두 곳에 따로 있음 - main.py와 pdf_parser.py).
+  - ✅ `main._extract_pdf_data()`의 절대 마디 번호 누산 로직을
+    `pdf_parser.iter_zones_with_start_measure()`(신규 공유 헬퍼)로
+    리팩터링해 중복 제거 완료. `build_measure_location_map()`이 쓰는
+    `iter_absolute_measures()`와 같은 누산 규칙을 공유하는지
+    교차 검증 테스트(`test_iter_zones_with_start_measure_matches_iter_absolute_measures`,
+    `test_extract_pdf_data_style_chord_numbering_matches_location_map`)로 확인.
   - 여전히 음표 단위 정밀 좌표는 없음 (Audiveris 결과에 좌표 정보가 없어
     마디 단위 bbox가 한계. 음표 단위로 가려면 Audiveris .omr 중간 파일이나
     homr `--write-staff-positions` 옵션 활용 검토 필요 - 별도 트랙).

@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pdf_parser import StaffZone, PageParseResult, build_measure_location_map  # noqa: E402
+from pdf_parser import StaffZone, PageParseResult, build_measure_location_map, iter_absolute_measures  # noqa: E402
 
 
 def _make_zone(index, top_y, bot_y, barlines):
@@ -123,6 +123,68 @@ def test_build_measure_location_map_multi_staff_per_page():
     assert loc_map[3].staff_index == 2
 
 
+def test_iter_zones_with_start_measure_matches_iter_absolute_measures():
+    """
+    iter_zones_with_start_measure()(zone 단위 시작 번호)와
+    iter_absolute_measures()(마디 단위 절대 번호)가 같은 누산 규칙을
+    쓰는지 교차 검증. main._extract_pdf_data()(전자 사용)와
+    build_measure_location_map()(후자 사용)가 서로 다른 마디 번호
+    기준을 쓰게 되는 리팩터링 회귀를 막기 위함.
+    """
+    from pdf_parser import iter_zones_with_start_measure
+
+    zone1 = _make_zone(1, top_y=100, bot_y=180, barlines=[500])           # 마디 2개
+    zone2 = _make_zone(1, top_y=100, bot_y=180, barlines=[500, 1000])     # 마디 3개
+    page1 = PageParseResult(pdf_path="d", page_num=0, staff_count=1, zones=[zone1])
+    page2 = PageParseResult(pdf_path="d", page_num=1, staff_count=1, zones=[zone2])
+    pages = [page1, page2]
+
+    # iter_absolute_measures가 보는 각 zone의 "첫 마디(m_in_staff=1)" 절대 번호
+    first_measure_from_absolute = {}
+    for abs_num, _page, zone, m_in_staff in iter_absolute_measures(pages):
+        if m_in_staff == 1:
+            first_measure_from_absolute[id(zone)] = abs_num
+
+    # iter_zones_with_start_measure가 주는 zone 시작 번호
+    start_from_zones = {}
+    for zone_start, _page, zone in iter_zones_with_start_measure(pages):
+        start_from_zones[id(zone)] = zone_start
+
+    assert first_measure_from_absolute == start_from_zones, (
+        "두 이터레이터가 같은 zone에 대해 다른 절대 마디 번호를 줌 - "
+        "main.py와 pdf_parser.py가 서로 다른 기준을 쓰게 될 위험"
+    )
+
+
+def test_extract_pdf_data_style_chord_numbering_matches_location_map():
+    """
+    main._extract_pdf_data()와 동일한 방식(zone.chords를 절대 마디
+    번호로 변환)으로 계산한 마디 번호가, build_measure_location_map()이
+    매핑한 마디 번호와 정확히 일치하는지 end-to-end 검증.
+    """
+    from pdf_parser import iter_zones_with_start_measure
+
+    zone = _make_zone(1, top_y=100, bot_y=180, barlines=[500, 1000])  # 마디 3개
+    zone.chords = [(1, 50, "C", 0.9), (2, 600, "G", 0.9), (3, 1100, "Am", 0.9)]
+    page = PageParseResult(pdf_path="d", page_num=0, staff_count=1, zones=[zone])
+
+    # _extract_pdf_data 방식
+    pdf_chords = []
+    for zone_start, _p, z in iter_zones_with_start_measure([page]):
+        for m, _x, ch, _cf in z.chords:
+            pdf_chords.append((zone_start + m - 1, ch))
+
+    # build_measure_location_map 방식
+    loc_map = build_measure_location_map([page], page_width=1500)
+
+    chord_measure_nums = {num for num, _ch in pdf_chords}
+    assert chord_measure_nums == set(loc_map.keys()), (
+        f"코드 추출이 쓰는 마디 번호 {chord_measure_nums}와 "
+        f"위치 매핑의 마디 번호 {set(loc_map.keys())}가 달라야 할 이유가 없음"
+    )
+    assert pdf_chords == [(1, "C"), (2, "G"), (3, "Am")]
+
+
 if __name__ == "__main__":
     tests = [
         test_measure_to_x_range_first_measure_starts_at_zero,
@@ -134,6 +196,8 @@ if __name__ == "__main__":
         test_build_measure_location_map_single_page_single_staff,
         test_build_measure_location_map_multi_page_continues_numbering,
         test_build_measure_location_map_multi_staff_per_page,
+        test_iter_zones_with_start_measure_matches_iter_absolute_measures,
+        test_extract_pdf_data_style_chord_numbering_matches_location_map,
     ]
     passed, failed = 0, 0
     for t in tests:

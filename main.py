@@ -74,27 +74,27 @@ def _extract_pdf_data(pdf_path: str):
     실패 시 (None, None) 반환.
     """
     try:
-        from pdf_parser import parse_all_pages
+        from pdf_parser import parse_all_pages, iter_zones_with_start_measure
         print("  PDF OCR 추출 중 (코드 기호 / 가사)...")
         pages = parse_all_pages(pdf_path)
 
         pdf_chords: list[tuple[int, str]] = []
         pdf_lyrics: list[tuple[int, str]] = []
-        abs_measure = 1  # 전체 악보 기준 절대 마디 번호 누산기
+        total_measures = 0
 
-        for page in pages:
-            for zone in page.zones:
-                # 오선 내 (measure_in_staff) → 절대 마디 번호
-                for m_in_staff, _x, ch, _cf in zone.chords:
-                    pdf_chords.append((abs_measure + m_in_staff - 1, ch))
-                for m_in_staff, text in zone.lyrics:
-                    pdf_lyrics.append((abs_measure + m_in_staff - 1, text))
-                # 마디선 감지 결과로 다음 오선의 시작 마디 번호 계산
-                abs_measure += zone.measure_count
+        # 절대 마디 번호 누산 규칙은 pdf_parser.iter_zones_with_start_measure()
+        # (= build_measure_location_map()이 쓰는 것과 동일한 단일 진실 공급원)를
+        # 공유해, 코드/가사 추출과 마디 위치 매핑이 항상 같은 번호 기준을 쓰도록 함.
+        for zone_start, _page, zone in iter_zones_with_start_measure(pages):
+            for m_in_staff, _x, ch, _cf in zone.chords:
+                pdf_chords.append((zone_start + m_in_staff - 1, ch))
+            for m_in_staff, text in zone.lyrics:
+                pdf_lyrics.append((zone_start + m_in_staff - 1, text))
+            total_measures = zone_start + zone.measure_count - 1
 
         print(
             f"    코드 기호 {len(pdf_chords)}건 / 가사 {len(pdf_lyrics)}건 추출 "
-            f"(총 {abs_measure - 1}마디 분량 처리)"
+            f"(총 {total_measures}마디 분량 처리)"
         )
         return pdf_chords, pdf_lyrics
     except Exception as e:
