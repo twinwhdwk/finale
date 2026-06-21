@@ -70,6 +70,44 @@ class StaffZone:
                 return i + 1
         return len(self.barlines) + 1
 
+    def measure_to_x_range(self, measure_in_staff: int, staff_width: int) -> tuple[int, int]:
+        """
+        오선 내 마디 번호(1-based) → (x_start, x_end) 픽셀 범위.
+
+        x_to_measure()의 역방향. PDF 하이라이트 기능에서 "이 마디가
+        화면의 어느 가로 구간에 있는지"를 구할 때 사용한다.
+
+        barlines는 마디 사이의 경계만 담고 있으므로 (오선 좌우 끝은
+        제외, _detect_barlines 참고), 첫 마디의 시작은 0, 마지막 마디의
+        끝은 staff_width로 보정한다. staff_width는 오선 크롭 이미지의
+        너비(보통 페이지 전체 너비, parse_page에서 img_gray.shape[1])를
+        넘겨주면 된다.
+        """
+        if measure_in_staff < 1:
+            raise ValueError(f"마디 번호는 1 이상이어야 함: {measure_in_staff}")
+
+        x_start = 0 if measure_in_staff == 1 else self.barlines[measure_in_staff - 2]
+        if measure_in_staff - 1 < len(self.barlines):
+            x_end = self.barlines[measure_in_staff - 1]
+        else:
+            x_end = staff_width
+        return (x_start, x_end)
+
+    def measure_bbox(self, measure_in_staff: int, staff_width: int) -> tuple[int, int, int, int]:
+        """
+        오선 내 마디 번호(1-based) → (x0, y0, x1, y1) 픽셀 bbox.
+
+        y0/y1은 코드 기호 영역까지 포함하도록 오선 위 staff_h만큼,
+        가사 영역까지 포함하도록 오선 아래 staff_h*2.5만큼 여유를 둔다
+        (pdf_parser._crop_chord_zone/_crop_lyric_zone과 동일한 범위 규칙).
+        실제 다음 오선과 겹치지 않도록 호출부에서 next_top으로 클램프하는
+        것을 권장 (parse_page에서 각 zone을 만들 때 이미 알고 있는 값).
+        """
+        x0, x1 = self.measure_to_x_range(measure_in_staff, staff_width)
+        y0 = max(0, self.top_y - self.staff_h)
+        y1 = self.bot_y + int(self.staff_h * 2.5)
+        return (x0, y0, x1, y1)
+
 
 @dataclass
 class PageParseResult:
@@ -363,3 +401,60 @@ def parse_all_pages(pdf_path: str, dpi: int = 600) -> list[PageParseResult]:
         print(f"  페이지 {p+1}/{total} 파싱 중...")
         results.append(parse_page(pdf_path, p, dpi))
     return results
+
+
+@dataclass
+class MeasureLocation:
+    """절대 마디 번호 1개의 PDF 상 위치 (페이지 + 픽셀 bbox)."""
+    measure_num: int        # 전체 악보 기준 절대 마디 번호 (1부터)
+    page_num:    int        # 0-based 페이지 번호 (fitz 인덱스와 동일)
+    staff_index: int        # 페이지 내 오선 번호 (1부터)
+    bbox:        tuple[int, int, int, int]   # (x0, y0, x1, y1) 픽셀 좌표
+
+
+def build_measure_location_map(
+    pages: list[PageParseResult],
+    page_width: int,
+) -> dict[int, MeasureLocation]:
+    """
+    parse_all_pages() 결과로부터 "절대 마디 번호 → PDF 상 위치" 매핑을 만든다.
+
+    main._extract_pdf_data()의 절대 마디 번호 누산 로직(abs_measure)과
+    동일한 규칙을 사용해, 코드/가사 추출과 위치 매핑이 항상 같은 마디
+    번호 기준을 공유하도록 한다. PDF 하이라이트 기능(report_generator의
+    HTML에서 오류 클릭 시 원본 위치 표시)의 핵심 데이터 구조로 쓰기 위함.
+
+    주의:
+        - page_width는 페이지마다 다를 수 있으나(스캔 PDF는 보통 동일),
+          이 함수는 단순화를 위해 모든 페이지에 같은 너비를 가정한다.
+          페이지별 너비가 다르면 호출부에서 페이지별로 따로 호출할 것.
+        - bbox는 StaffZone.measure_bbox()를 그대로 사용하므로 다음
+          오선과 겹칠 수 있다 (TODO: next_top으로 클램프하는 보강).
+
+    Args:
+        pages:      parse_all_pages()의 반환값
+        page_width: 픽셀 단위 페이지 너비 (parse_page 내부의
+                    img_gray.shape[1]과 동일한 값을 넘겨야 정확함.
+                    호출부에서 알 수 없다면 pdf_parser._pdf_page_to_np로
+                    동일 dpi로 한 번 더 렌더링해 shape를 구해야 함)
+
+    Returns:
+        {절대_마디_번호: MeasureLocation}
+    """
+    location_map: dict[int, MeasureLocation] = {}
+    abs_measure = 1
+
+    for page in pages:
+        for zone in page.zones:
+            for m_in_staff in range(1, zone.measure_count + 1):
+                abs_num = abs_measure + m_in_staff - 1
+                bbox = zone.measure_bbox(m_in_staff, page_width)
+                location_map[abs_num] = MeasureLocation(
+                    measure_num=abs_num,
+                    page_num=page.page_num,
+                    staff_index=zone.index,
+                    bbox=bbox,
+                )
+            abs_measure += zone.measure_count
+
+    return location_map

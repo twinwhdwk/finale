@@ -124,8 +124,24 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
 
 ## TODO (미구현)
 
-- HTML 리포트에서 오류 클릭 시 PDF 원본 위치 하이라이트 (bbox 좌표 필요, 설계 문서: `~/.claude/projects/.../todo_pdf_highlight.md`)
-  - 참고: `pdf_parser.StaffZone`에 `top_y`/`bot_y`/`barlines`(x좌표)가 있어 마디 단위 bbox 추정은 가능. 음표 단위 정밀 좌표는 Audiveris 결과에 없어 별도 트랙 필요.
+- HTML 리포트에서 오류 클릭 시 PDF 원본 위치 하이라이트 (설계 문서: `~/.claude/projects/.../todo_pdf_highlight.md`)
+  - ✅ 좌표 매핑 기반 작업 완료: `pdf_parser.py`에 `StaffZone.measure_to_x_range()`/
+    `measure_bbox()`(마디 번호 → 픽셀 bbox, `x_to_measure()`의 역함수),
+    `build_measure_location_map()`(여러 페이지를 가로지르는 절대 마디 번호 →
+    페이지+bbox 전역 매핑, `main._extract_pdf_data()`의 절대 마디 번호
+    누산 규칙과 동일하게 맞춤) 추가. `tests/test_measure_location.py`
+    9개로 검증 (역함수 일관성, 페이지/오선 경계 넘는 번호 이어짐, y좌표
+    음수 클램프 등).
+  - 아직 안 한 것: (1) 이 매핑을 실제 HTML 리포트(`report_generator.py`)에
+    연결 - 클릭 시 PDF를 이미지로 보여주고 bbox 위치에 박스를 그리는
+    프론트엔드 작업. (2) PDF를 페이지 이미지로 변환해 HTML에 내장하거나
+    별도 서빙하는 방식 결정 필요 (base64 inline vs 별도 정적 파일).
+    (3) `main._extract_pdf_data()`를 `build_measure_location_map()` 사용하도록
+    리팩터링해 로직 중복 제거 (현재는 같은 절대 마디 번호 누산 코드가
+    두 곳에 따로 있음 - main.py와 pdf_parser.py).
+  - 여전히 음표 단위 정밀 좌표는 없음 (Audiveris 결과에 좌표 정보가 없어
+    마디 단위 bbox가 한계. 음표 단위로 가려면 Audiveris .omr 중간 파일이나
+    homr `--write-staff-positions` 옵션 활용 검토 필요 - 별도 트랙).
 
 - **이음줄(tie/slur) 인식 개선** — 1단계 완료, 다음 단계 정리:
   1. ✅ `xml_comparator.py`에 PDF측 `el.tie` 직접 비교 로직 추가 완료
