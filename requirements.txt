@@ -1,1 +1,11 @@
 music21>=9.1.0
+PyMuPDF>=1.23.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+pytesseract>=0.3.10
+easyocr>=1.7.0
+verovio>=4.0.0
+
+# --engine homr 사용 시에만 필요 (별도 설치: pip install homr && homr --init)
+# homr>=0.6.2

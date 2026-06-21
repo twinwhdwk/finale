@@ -33,6 +33,15 @@ from xml_comparator import compare
 from report_generator import print_console, save_html
 
 
+def _get_converter(engine: str):
+    """엔진 이름에 따라 convert_pdf_to_xml 함수를 선택합니다."""
+    if engine == "homr":
+        from homr_runner import convert_pdf_to_xml
+        return convert_pdf_to_xml
+    from pdf_to_xml import convert_pdf_to_xml
+    return convert_pdf_to_xml
+
+
 def _extract_pdf_data(pdf_path: str):
     """
     pdf_parser로 코드 기호·가사를 추출합니다.
@@ -161,7 +170,7 @@ def cmd_compare(args):
 # ── full (단일 PDF 변환 + 비교) ───────────────────────────────────────
 
 def cmd_full(args):
-    from pdf_to_xml import convert_pdf_to_xml
+    convert_pdf_to_xml = _get_converter(args.engine)
 
     paths         = config_loader.get_paths()
     part          = args.part if args.part is not None else config_loader.get_part_index()
@@ -171,12 +180,16 @@ def cmd_full(args):
     Path(conv_dir).mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\n[1단계] PDF → XML 변환")
+    print(f"\n[1단계] PDF → XML 변환 (엔진: {args.engine})")
     xml_paths = convert_pdf_to_xml(args.pdf, conv_dir)
 
     if not xml_paths:
         print("변환된 XML 파일을 찾을 수 없습니다.")
         sys.exit(1)
+
+    if args.engine == "homr" and len(xml_paths) > 1:
+        print(f"  주의: homr는 페이지별로 {len(xml_paths)}개 결과를 생성했습니다. "
+              f"첫 페이지만 비교에 사용합니다 (다중 페이지 병합 비교는 TODO).")
 
     pdf_xml = xml_paths[0]
     print(f"  변환 결과: {pdf_xml}\n")
@@ -187,7 +200,8 @@ def cmd_full(args):
                      pdf_chords=pdf_chords, pdf_lyrics=pdf_lyrics)
     print_console(result)
 
-    html_path = args.html or str(report_dir / (Path(args.pdf).stem + "_report.html"))
+    suffix = f"_{args.engine}" if args.engine != "audiveris" else ""
+    html_path = args.html or str(report_dir / (Path(args.pdf).stem + suffix + "_report.html"))
     save_html(result, html_path)
 
 
@@ -278,6 +292,70 @@ def cmd_visual(args):
     save_visual_html(pairs, textbook, finale, str(html_path))
 
 
+# ── compare-engines (Audiveris vs homr 비교) ───────────────────────────
+
+def cmd_compare_engines(args):
+    """동일 PDF를 Audiveris와 homr 양쪽으로 변환해 원본과 비교, 결과를 나란히 출력합니다.
+
+    이음줄(tie_suspect)을 포함한 트랙별 오류 건수를 엔진별로 대조하기 위한 용도.
+    """
+    paths      = config_loader.get_paths()
+    part       = args.part if args.part is not None else config_loader.get_part_index()
+    report_dir = Path(paths["report_dir"])
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    conv_dir = Path(args.output_dir or paths["converted_xml_dir"])
+    conv_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_chords, pdf_lyrics = _extract_pdf_data(args.pdf)
+
+    results = {}
+    for engine in ("audiveris", "homr"):
+        print(f"\n{'='*60}\n[엔진: {engine}]\n{'='*60}")
+        convert_pdf_to_xml = _get_converter(engine)
+        try:
+            xml_paths = convert_pdf_to_xml(args.pdf, str(conv_dir / engine))
+        except RuntimeError as e:
+            print(f"  변환 실패 ({engine}): {e}")
+            results[engine] = None
+            continue
+
+        if not xml_paths:
+            print(f"  변환된 XML 없음 ({engine})")
+            results[engine] = None
+            continue
+
+        if engine == "homr" and len(xml_paths) > 1:
+            print(f"  주의: homr 결과 {len(xml_paths)}페이지 중 첫 페이지만 비교")
+
+        result = compare(xml_paths[0], args.orig, part_index=part,
+                         pdf_chords=pdf_chords, pdf_lyrics=pdf_lyrics)
+        print_console(result)
+        results[engine] = result
+
+        html_path = report_dir / f"{Path(args.pdf).stem}_{engine}_report.html"
+        save_html(result, str(html_path))
+
+    # ── 비교 요약 ──
+    print(f"\n{'='*60}\n[엔진 비교 요약]\n{'='*60}")
+    header = f"{'항목':<20}{'audiveris':>14}{'homr':>14}"
+    print(header)
+    print("-" * len(header))
+
+    def _row(label, fn):
+        a = fn(results["audiveris"]) if results["audiveris"] else "-"
+        h = fn(results["homr"])      if results["homr"]      else "-"
+        print(f"{label:<20}{str(a):>14}{str(h):>14}")
+
+    _row("총 불일치", lambda r: len(r.discrepancies))
+    _row("음표 오류",   lambda r: r.note_errors)
+    _row("  타이 의심", lambda r: r.tie_suspect_count)
+    _row("  OMR 누락",  lambda r: r.missing_count)
+    _row("  OMR 노이즈", lambda r: r.noise_count)
+    _row("코드 오류",   lambda r: r.chord_errors)
+    _row("가사 오류",   lambda r: r.lyric_errors)
+
+
 # ── config 확인 ───────────────────────────────────────────────────────
 
 def cmd_config(_args):
@@ -332,6 +410,8 @@ def main():
     p_full.add_argument("--output-dir", help="변환 XML 저장 폴더 (기본값: config.ini converted_xml_dir)")
     p_full.add_argument("--part", type=int, default=None, help="파트 인덱스 (기본값: config.ini)")
     p_full.add_argument("--html", help="HTML 리포트 저장 경로 (기본값: config.ini report_dir)")
+    p_full.add_argument("--engine", choices=["audiveris", "homr"], default="audiveris",
+                        help="OMR 변환 엔진 선택 (기본값: audiveris)")
     p_full.set_defaults(func=cmd_full)
 
     # convert (단일)
@@ -345,6 +425,17 @@ def main():
     p_batch.add_argument("--pdf-dir",    help="PDF 폴더 (기본값: config.ini pdf_dir)")
     p_batch.add_argument("--output-dir", help="저장 폴더 (기본값: config.ini converted_xml_dir)")
     p_batch.set_defaults(func=cmd_batch_convert)
+
+    # compare-engines
+    p_cmp_eng = sub.add_parser(
+        "compare-engines",
+        help="동일 PDF를 Audiveris와 homr 양쪽으로 변환해 원본과 비교 (엔진별 정확도 대조)"
+    )
+    p_cmp_eng.add_argument("--pdf",        required=True, help="원본 PDF 경로")
+    p_cmp_eng.add_argument("--orig",       required=True, help="피날레 원본 XML 경로")
+    p_cmp_eng.add_argument("--output-dir", help="변환 XML 저장 폴더 (기본값: config.ini converted_xml_dir)")
+    p_cmp_eng.add_argument("--part", type=int, default=None, help="파트 인덱스 (기본값: config.ini)")
+    p_cmp_eng.set_defaults(func=cmd_compare_engines)
 
     # config
     p_cfg = sub.add_parser("config", help="현재 config.ini 설정 확인")

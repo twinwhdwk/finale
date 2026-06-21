@@ -71,6 +71,8 @@ class CompareResult:
     @property
     def noise_count(self)      -> int: return self._by_kind("noise")
     @property
+    def tie_suspect_count(self)-> int: return self._by_kind("tie_suspect")
+    @property
     def measure_miss_count(self)-> int: return self._by_kind("measure_miss")
     @property
     def note_total(self)       -> int: return sum(1 for d in self.discrepancies if d.track == "note")
