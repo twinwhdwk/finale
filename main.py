@@ -42,6 +42,32 @@ def _get_converter(engine: str):
     return convert_pdf_to_xml
 
 
+def _convert_and_resolve_single_xml(pdf_path: str, conv_dir: str, engine: str) -> str | None:
+    """
+    PDF를 지정 엔진으로 변환하고, xml_comparator.compare()가 바로 쓸 수 있는
+    "단일 XML 경로" 하나를 반환합니다.
+
+    audiveris: 보통 결과가 1개라 그대로 반환.
+    homr:      페이지별로 여러 .musicxml이 나오므로, 2개 이상이면
+               homr_runner.merge_page_musicxmls()로 병합한 합본을 반환.
+    """
+    convert_pdf_to_xml = _get_converter(engine)
+    xml_paths = convert_pdf_to_xml(pdf_path, conv_dir)
+
+    if not xml_paths:
+        return None
+    if len(xml_paths) == 1:
+        return xml_paths[0]
+
+    if engine == "homr":
+        from homr_runner import merge_page_musicxmls
+        merged_path = str(Path(conv_dir) / (Path(pdf_path).stem + "_merged.musicxml"))
+        print(f"  homr 결과 {len(xml_paths)}페이지를 병합합니다 -> {merged_path}")
+        return merge_page_musicxmls(xml_paths, merged_path)
+
+    return xml_paths[0]
+
+
 def _extract_pdf_data(pdf_path: str):
     """
     pdf_parser로 코드 기호·가사를 추출합니다.
@@ -170,8 +196,6 @@ def cmd_compare(args):
 # ── full (단일 PDF 변환 + 비교) ───────────────────────────────────────
 
 def cmd_full(args):
-    convert_pdf_to_xml = _get_converter(args.engine)
-
     paths         = config_loader.get_paths()
     part          = args.part if args.part is not None else config_loader.get_part_index()
     conv_dir      = args.output_dir or paths["converted_xml_dir"]
@@ -181,17 +205,12 @@ def cmd_full(args):
     report_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n[1단계] PDF → XML 변환 (엔진: {args.engine})")
-    xml_paths = convert_pdf_to_xml(args.pdf, conv_dir)
+    pdf_xml = _convert_and_resolve_single_xml(args.pdf, conv_dir, args.engine)
 
-    if not xml_paths:
+    if not pdf_xml:
         print("변환된 XML 파일을 찾을 수 없습니다.")
         sys.exit(1)
 
-    if args.engine == "homr" and len(xml_paths) > 1:
-        print(f"  주의: homr는 페이지별로 {len(xml_paths)}개 결과를 생성했습니다. "
-              f"첫 페이지만 비교에 사용합니다 (다중 페이지 병합 비교는 TODO).")
-
-    pdf_xml = xml_paths[0]
     print(f"  변환 결과: {pdf_xml}\n")
 
     print("[2단계] XML 비교")
@@ -312,23 +331,19 @@ def cmd_compare_engines(args):
     results = {}
     for engine in ("audiveris", "homr"):
         print(f"\n{'='*60}\n[엔진: {engine}]\n{'='*60}")
-        convert_pdf_to_xml = _get_converter(engine)
         try:
-            xml_paths = convert_pdf_to_xml(args.pdf, str(conv_dir / engine))
+            pdf_xml = _convert_and_resolve_single_xml(args.pdf, str(conv_dir / engine), engine)
         except RuntimeError as e:
             print(f"  변환 실패 ({engine}): {e}")
             results[engine] = None
             continue
 
-        if not xml_paths:
+        if not pdf_xml:
             print(f"  변환된 XML 없음 ({engine})")
             results[engine] = None
             continue
 
-        if engine == "homr" and len(xml_paths) > 1:
-            print(f"  주의: homr 결과 {len(xml_paths)}페이지 중 첫 페이지만 비교")
-
-        result = compare(xml_paths[0], args.orig, part_index=part,
+        result = compare(pdf_xml, args.orig, part_index=part,
                          pdf_chords=pdf_chords, pdf_lyrics=pdf_lyrics)
         print_console(result)
         results[engine] = result

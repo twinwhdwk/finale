@@ -147,8 +147,12 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
     `tie_suspect` 건수가 실제 채보 오류와 맞는지 사람이 확인 필요.
     homr는 모델 다운로드 가능한 로컬 PC에서 실측 후 재평가.
 
-- `homr_runner.py`: 다중 페이지 PDF의 페이지별 결과(.musicxml) 병합 비교 미구현.
-  현재 `compare-engines`/`full --engine homr`는 첫 페이지만 비교에 사용.
+- `homr_runner.py`: ✅ 다중 페이지 PDF의 페이지별 결과(.musicxml) 병합 비교 구현 완료
+  (`merge_page_musicxmls()` - 마디 번호 1부터 재부여하여 단일 합본 XML 생성,
+  `main.py`의 `full --engine homr`/`compare-engines`에 자동 연결됨).
+  `tests/test_homr_merge.py`로 검증 (실제 모델 없이 가짜 페이지 XML로 테스트).
+  알려진 한계: 페이지 경계에서 조표/박자표가 실제로 바뀌는 악보는 부정확할 수 있음
+  (단순 이어붙이기라 attributes 재선언을 하지 않음) - 실측 필요.
 
 - `homr_runner.py`: 실제 모델 다운로드/추론을 거친 통합 테스트 아직 없음
   (이 컨테이너는 `release-assets.githubusercontent.com`이 네트워크

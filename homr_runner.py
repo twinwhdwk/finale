@@ -99,6 +99,56 @@ def _run_homr_on_image(image_path: Path, gpu: str = "auto", extra_args: list[str
     return expected_out
 
 
+def merge_page_musicxmls(page_xml_paths: list[str], output_path: str) -> str:
+    """
+    homr가 페이지별로 출력한 여러 .musicxml을 마디 순서대로 이어붙여
+    하나의 합본 .musicxml로 만든다.
+
+    xml_comparator.compare()는 단일 XML 쌍 비교만 지원하므로, 다중 페이지
+    PDF를 homr로 돌린 결과를 원본 Finale XML(보통 곡 전체가 한 파일)과
+    비교하려면 이 병합이 필요하다.
+
+    주의:
+        - 각 페이지 결과의 파트(Part) 수가 다르면 첫 번째 파트만 사용한다
+          (homr는 보통 단일 보표 사진 기준이라 파트 1개가 일반적).
+        - 마디 번호(measure.number)는 병합 후 1부터 다시 순차 부여한다
+          (페이지마다 1번부터 시작하는 번호를 그대로 이어붙이면 충돌하므로).
+        - 박자표/조표 등 attributes는 페이지가 바뀌어도 다시 선언하지 않고
+          이어지는 것으로 간주한다 (단순 이어붙이기이므로 페이지 경계에서
+          조표가 실제로 바뀌는 악보는 정확하지 않을 수 있음 - 알려진 한계).
+
+    Args:
+        page_xml_paths: 페이지 순서대로 정렬된 .musicxml 경로 목록
+        output_path:    병합 결과를 저장할 .musicxml 경로
+
+    Returns:
+        output_path (그대로 반환, 체이닝 편의용)
+    """
+    from music21 import stream, converter
+
+    if not page_xml_paths:
+        raise ValueError("병합할 페이지 XML이 없습니다.")
+
+    merged_part = stream.Part()
+    next_measure_num = 1
+
+    for path in page_xml_paths:
+        score = converter.parse(path)
+        parts = score.parts
+        source_part = parts[0] if parts else score.flatten()
+
+        for m in source_part.getElementsByClass("Measure"):
+            m_copy = m
+            m_copy.number = next_measure_num
+            merged_part.append(m_copy)
+            next_measure_num += 1
+
+    merged_score = stream.Score()
+    merged_score.append(merged_part)
+    merged_score.write("musicxml", fp=output_path)
+    return output_path
+
+
 def convert_pdf_to_xml(
     pdf_path: str,
     output_dir: str,
