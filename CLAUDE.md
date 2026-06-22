@@ -52,8 +52,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      세로 투영 피크 기반으로 개별 음표로 분할. 3개 묶음까지 검증.
      `tests/test_note_detector.py` 17개로 검증 (stem_up/down 전 음가,
      빔 그룹 2/3개, 혼합 마디). `pytest 43/43 통과`.
-  4. ⬜ **미착수**: 오선 y좌표 → 음높이(pitch) 매핑 (`head_y` → 음이름),
-     점음표/쉼표 처리, 최종 MusicXML 생성(music21 또는 직접 빌드).
+  4. ✅ **음높이 판정** (`note_recognition/note_pitcher.py`):
+     `head_y_to_staff_step()` - head_y 픽셀 → staff_step 역산
+     (`round((line4_y - head_y) * 2 / staff_gap)`).
+     `staff_step_to_pitch()` - 높은/낮은음자리표별 온음계 매핑.
+     `Pitch` 데이터클래스 - step/octave/accidental + music21 호환
+     `name_with_octave`(예: "C4") + MIDI 번호 변환.
+     `tests/test_note_pitcher.py` 13개로 검증 (landmarks E4~F5,
+     Middle C=C4, 7step=1옥타브, MIDI 오름차순, 픽셀 오차 스냅,
+     합성이미지 왕복 테스트, end-to-end E4/B4/D5/C4 판정 확인).
+     `pytest 56/56 통과`.
+  5. ⬜ **미착수**: 점음표(dotted) / 쉼표(rest) 처리,
+     최종 MusicXML 생성 (music21 stream으로 note 조립 → .musicxml 저장).
 
 ## Commands
 
