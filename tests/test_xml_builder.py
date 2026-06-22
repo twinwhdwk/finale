@@ -22,7 +22,7 @@ from note_recognition.xml_builder import notes_to_score, save_musicxml  # noqa: 
 
 def _detect(notes_spec: list[NoteSpec]) -> tuple[NoteDetectionResult, SyntheticScoreSpec]:
     spec = SyntheticScoreSpec(notes=notes_spec)
-    img, _ = render_synthetic_staff(spec)
+    img, _, _ = render_synthetic_staff(spec)
     top_y = spec.staff_top
     bot_y = spec.staff_top + 4 * spec.staff_gap
     t = detect_staff_line_thickness(img, [(top_y, bot_y)])

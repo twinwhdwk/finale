@@ -25,7 +25,7 @@ from note_recognition.note_detector import detect_notes  # noqa: E402
 def _run(notes_spec: list[NoteSpec], **kwargs) -> tuple:
     """합성 이미지 생성 + 오선 두께 측정 + 음표 검출을 한 번에 수행."""
     spec = SyntheticScoreSpec(notes=notes_spec, **kwargs)
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     top_y = spec.staff_top
     bot_y = spec.staff_top + 4 * spec.staff_gap
     t = detect_staff_line_thickness(img, [(top_y, bot_y)])
@@ -267,3 +267,53 @@ if __name__ == "__main__":
     print(f"\n{passed}개 통과, {failed}개 실패")
     import sys
     sys.exit(1 if failed else 0)
+
+
+# ── 쉼표(rest) 탐지 테스트 ──────────────────────────────────────────
+
+def test_whole_rest_detected_separately_from_notes():
+    """전쉼표(whole rest)가 음표와 별도로 rests 목록에 분리 탐지되어야 함."""
+    from synthetic_score import RestSpec
+    spec = SyntheticScoreSpec(
+        notes=[NoteSpec(x=200, staff_step=4, duration="quarter")],
+        rests=[RestSpec(x=500, duration="whole")],
+    )
+    img, gt, rest_gt = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+
+    assert len(result.notes) == 1, f"음표 {len(result.notes)}개 (기대 1개)"
+    assert len(result.rests) >= 1, "전쉼표가 탐지되지 않음"
+    assert any(r.duration == "whole" for r in result.rests), "전쉼표 duration 오분류"
+
+
+def test_half_rest_detected():
+    """2분쉼표(half rest)가 rests 목록에 탐지되어야 함."""
+    from synthetic_score import RestSpec
+    spec = SyntheticScoreSpec(rests=[RestSpec(x=400, duration="half")])
+    img, gt, rest_gt = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+
+    assert len(result.rests) >= 1, "2분쉼표가 탐지되지 않음"
+    assert any(r.duration == "half" for r in result.rests), "2분쉼표 duration 오분류"
+
+
+def test_whole_note_not_misclassified_as_rest():
+    """
+    온음표(whole note)가 쉼표로 오분류되지 않아야 함.
+
+    회귀 방지: _classify_rest의 초기 구현에서 4분/8분쉼표 판별 조건이
+    온음표와 겹쳐 whole note가 DetectedRest로 빠지는 버그가 있었음.
+    """
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="whole")])
+    assert len(result.notes) == 1, (
+        f"whole note가 음표로 검출되지 않음 (notes={len(result.notes)}, "
+        f"rests={len(result.rests)})"
+    )
+    assert result.notes[0].duration == "whole"
+    assert len(result.rests) == 0, f"온음표가 쉼표로 오분류됨: {result.rests}"

@@ -40,7 +40,7 @@ def test_thickness_detection_matches_actual_rendering():
     최빈값이 항상 실제보다 작게(1px) 나오는 버그가 있었음.
     """
     spec = SyntheticScoreSpec(notes=[])
-    img, _ = render_synthetic_staff(spec)
+    img, _, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     detected = detect_staff_line_thickness(img, [(top_y, bot_y)])
@@ -57,7 +57,7 @@ def test_thickness_detection_robust_to_notes_present():
         NoteSpec(x=400, staff_step=2, duration="half"),
         NoteSpec(x=500, staff_step=4, duration="whole"),
     ])
-    img, _ = render_synthetic_staff(spec)
+    img, _, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     detected = detect_staff_line_thickness(img, [(top_y, bot_y)])
@@ -69,7 +69,7 @@ def test_staff_lines_fully_removed_in_empty_region():
     spec = SyntheticScoreSpec(notes=[
         NoteSpec(x=200, staff_step=4, duration="quarter"),
     ])
-    img, _ = render_synthetic_staff(spec)
+    img, _, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     removed = remove_staff_lines(img, top_y, bot_y,
@@ -90,7 +90,7 @@ def test_filled_notehead_mostly_preserved():
     spec = SyntheticScoreSpec(notes=[
         NoteSpec(x=200, staff_step=4, duration="quarter"),
     ])
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     removed = remove_staff_lines(img, top_y, bot_y,
@@ -126,7 +126,7 @@ def test_hollow_notehead_not_erased_as_staff_line():
     spec = SyntheticScoreSpec(notes=[
         NoteSpec(x=500, staff_step=4, duration="whole"),
     ])
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     removed = remove_staff_lines(img, top_y, bot_y,
@@ -160,7 +160,7 @@ def test_all_duration_types_survive_staff_removal():
         NoteSpec(x=500, staff_step=4, duration="whole"),
         NoteSpec(x=600, staff_step=8, duration="sixteenth"),
     ])
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     top_y, bot_y = _staff_y_range(spec)
 
     removed = remove_staff_lines(img, top_y, bot_y,

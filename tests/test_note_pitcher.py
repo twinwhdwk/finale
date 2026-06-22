@@ -180,7 +180,7 @@ def test_full_pipeline_note_pitch_from_synthetic():
         NoteSpec(x=650, staff_step=-2, duration="quarter"),   # C4 (아래 덧줄)
     ]
     spec = SyntheticScoreSpec(notes=note_specs)
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     top_y = spec.staff_top
     bot_y = spec.staff_top + 4 * spec.staff_gap
     t = detect_staff_line_thickness(img, [(top_y, bot_y)])

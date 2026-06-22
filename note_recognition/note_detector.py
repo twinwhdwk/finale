@@ -54,25 +54,92 @@ _HAS_STEM_HEIGHT_RATIO = 2.5
 @dataclass
 class DetectedNote:
     """오선 제거된 이미지에서 검출된 음표 1개의 정보."""
-    bbox: tuple[int, int, int, int]  # (x, y, w, h) 연결성분 bbox
-    head_x: int                       # 추정 음표머리 중심 x
-    head_y: int                       # 추정 음표머리 중심 y
-    duration: str                     # "whole"|"half"|"quarter"|"eighth"|"sixteenth"
-    n_flags: int                      # 깃발 수 (0~2, whole/half는 항상 0)
-    stem_up: bool | None              # True=기둥 위, False=기둥 아래, None=기둥 없음(whole)
-    head_fill_density: float          # 머리 영역 픽셀 밀도 (디버그용)
-    component_area: int               # 연결성분 전체 픽셀 수 (디버그용)
-    is_dotted: bool = False           # 점음표 여부 (quarter_length × 1.5)
+    bbox: tuple[int, int, int, int]
+    head_x: int
+    head_y: int
+    duration: str
+    n_flags: int
+    stem_up: bool | None
+    head_fill_density: float
+    component_area: int
+    is_dotted: bool = False
+
+
+@dataclass
+class DetectedRest:
+    """오선 제거된 이미지에서 검출된 쉼표 1개의 정보."""
+    bbox: tuple[int, int, int, int]  # (x, y, w, h)
+    center_x: int
+    center_y: int
+    duration: str    # "whole" | "half" | "quarter" | "eighth"
+    aspect: float    # w/h 비율 (디버그용)
 
 
 @dataclass
 class NoteDetectionResult:
     """한 오선 시스템에 대한 음표 검출 결과."""
     notes: list[DetectedNote] = field(default_factory=list)
+    rests: list[DetectedRest] = field(default_factory=list)
     staff_top_y: int = 0
     staff_bot_y: int = 0
     line_thickness: int = 2
     staff_gap: int = 20           # 검출 시 사용된 오선 간격 추정값 (notehead_radius 추정 기반)
+
+
+def _classify_rest(
+    bbox: tuple[int, int, int, int],
+    staff_top_y: int,
+    staff_gap: int,
+) -> DetectedRest | None:
+    """
+    연결성분 bbox가 쉼표인지 판별하고 종류를 반환한다.
+
+    ## 판별 규칙
+
+    전/2분쉼표는 납작한 가로 직사각형 블록 (aspect w/h > 3):
+      - 전쉼표: bbox 하단이 맨 아래 오선(line4_y) 근처 + 두꺼운 블록
+      - 2분쉼표: bbox가 line3 근처에 위치 + 더 얇은 블록
+
+    4분/8분쉼표는 복잡한 선형 모양으로 aspect < 3이지만 높이가 낮음.
+    현재 단순화: 4분/8분은 aspect < 3 + area가 음표보다 작고
+    세로 높이가 오선 간격의 1.5배 이하인 경우.
+
+    음표(전체 bbox h가 큰 경우)와 쉼표(h가 작은 경우)는 h로 1차 구분.
+
+    Args:
+        bbox:         (x, y, w, h) 연결성분 bbox
+        staff_top_y:  오선 맨 위줄 y좌표
+        staff_gap:    오선 간격
+
+    Returns:
+        DetectedRest (쉼표로 판별된 경우), None (음표이거나 판별 불가)
+    """
+    x, y, w, h = bbox
+    if h == 0 or w == 0:
+        return None
+    aspect = w / h
+    cx, cy = x + w // 2, y + h // 2
+    line4_y = staff_top_y + 4 * staff_gap
+    line3_y = staff_top_y + 3 * staff_gap
+
+    # 전/2분쉼표: 가로로 넓은 블록 (aspect > 3, h < staff_gap * 0.8)
+    if aspect > 3 and h < staff_gap * 0.8 and w > staff_gap:
+        bottom_y = y + h
+        dist_to_line4 = abs(bottom_y - line4_y)
+        dist_to_line3 = abs(bottom_y - line3_y)
+
+        if dist_to_line4 < dist_to_line3:
+            return DetectedRest(bbox=bbox, center_x=cx, center_y=cy,
+                                duration="whole", aspect=aspect)
+        else:
+            return DetectedRest(bbox=bbox, center_x=cx, center_y=cy,
+                                duration="half", aspect=aspect)
+
+    # 4분/8분쉼표는 온음표와 특성이 겹쳐 false positive가 많음.
+    # 현재 버전에서는 블록형(전/2분)만 탐지하고 선형 쉼표는 미지원.
+    # TODO: 4분쉼표(지그재그)와 8분쉼표(사선+점)의 정밀 분류기 추가.
+
+    return None
 
 
 def _estimate_notehead_radius(staff_gap: int) -> int:
@@ -374,9 +441,20 @@ def detect_notes(
     all_items = split_all_beam_components(binary_roi, stats, notehead_radius, min_area=MIN_NOTE_AREA)
 
     notes: list[DetectedNote] = []
+    rests: list[DetectedRest] = []
+
     for item in all_items:
+        bbox = item["bbox"]
+        bx, by, bw, bh = bbox
+
+        # 쉼표 판별 먼저 시도 (음표보다 h가 훨씬 작은 납작한 컴포넌트)
+        rest = _classify_rest(bbox, staff_top_y, staff_gap)
+        if rest is not None:
+            rests.append(rest)
+            continue
+
         note = _classify_duration(
-            binary_roi, item["bbox"], notehead_radius,
+            binary_roi, bbox, notehead_radius,
             stem_up_hint=item["stem_up"],
             stem_x_hint=item["stem_x"],
         )
@@ -384,9 +462,11 @@ def detect_notes(
 
     # x순 정렬 (악보 읽기 순서)
     notes.sort(key=lambda n: n.head_x)
+    rests.sort(key=lambda r: r.center_x)
 
     return NoteDetectionResult(
         notes=notes,
+        rests=rests,
         staff_top_y=staff_top_y,
         staff_bot_y=staff_bot_y,
         line_thickness=line_thickness,

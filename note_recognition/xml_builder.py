@@ -131,6 +131,18 @@ def notes_to_score(
     if len(current_measure) > 0:
         p.append(current_measure)
 
+    # 쉼표(DetectedRest) 처리
+    # 현재 구현은 음표 목록 뒤에 별도 마디로 추가하는 단순 방식.
+    # TODO: 음표와 쉼표를 x좌표 순서로 통합 정렬해 올바른 마디 구성
+    if detection_result.rests:
+        rest_measure = stream.Measure(number=len(p.getElementsByClass("Measure")) + 1)
+        for detected_rest in detection_result.rests:
+            ql = _DURATION_TO_QUARTER.get(detected_rest.duration, 1.0)
+            r = note.Rest()
+            r.duration = duration.Duration(_DURATION_TYPE.get(detected_rest.duration, "quarter"))
+            rest_measure.append(r)
+        p.append(rest_measure)
+
     s.append(p)
     return s
 

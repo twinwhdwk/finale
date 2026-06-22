@@ -34,9 +34,17 @@ class NoteSpec:
 
 
 @dataclass
+class RestSpec:
+    """그릴 쉼표 하나의 명세 (ground truth)."""
+    x: int           # 쉼표 중심 x좌표
+    duration: str    # "whole" | "half" | "quarter" | "eighth"
+
+
+@dataclass
 class SyntheticScoreSpec:
     """합성 악보 1개 시스템(오선 1줄) 명세."""
     notes: list[NoteSpec] = field(default_factory=list)
+    rests: list[RestSpec] = field(default_factory=list)
     width: int = 1600
     height: int = 400
     staff_top: int = 150        # line0(맨 위 줄)의 y좌표
@@ -84,7 +92,6 @@ def render_synthetic_staff(spec: SyntheticScoreSpec) -> tuple[np.ndarray, list[d
         gt = _draw_note(img, note, head_y, spec)
         ground_truth.append(gt)
 
-        # 기둥 끝 y 저장 (빔 연결용)
         if note.duration != "whole":
             stem_len = spec.staff_gap * 3.5
             r = spec.notehead_radius
@@ -94,6 +101,12 @@ def render_synthetic_staff(spec: SyntheticScoreSpec) -> tuple[np.ndarray, list[d
             else:
                 stem_bots[idx] = int(head_y + stem_len)
             gt["stem_x"] = stem_x
+
+    # ── 쉼표 그리기 ──
+    rest_gt: list[dict] = []
+    for rest in spec.rests:
+        gt_r = _draw_rest(img, rest, spec)
+        rest_gt.append(gt_r)
 
     # ── 빔(beam) 연결선 그리기 ──
     for idx, note in enumerate(spec.notes):
@@ -116,7 +129,7 @@ def render_synthetic_staff(spec: SyntheticScoreSpec) -> tuple[np.ndarray, list[d
 
         cv2.line(img, (stem_x1, by1), (stem_x2, by2), 0, 4)
 
-    return img, ground_truth
+    return img, ground_truth, rest_gt
 
 
 def _draw_note(img: np.ndarray, note: NoteSpec, head_y: int, spec: SyntheticScoreSpec) -> dict:
@@ -204,6 +217,49 @@ def _draw_note(img: np.ndarray, note: NoteSpec, head_y: int, spec: SyntheticScor
     }
 
 
+def _draw_rest(img: np.ndarray, rest: RestSpec, spec: SyntheticScoreSpec) -> dict:
+    """쉼표를 그리고 ground truth 딕셔너리를 반환."""
+    line4_y = spec.staff_top + 4 * spec.staff_gap
+    line3_y = spec.staff_top + 3 * spec.staff_gap
+    w_half = spec.staff_gap + 4   # 쉼표 블록 가로 반폭
+
+    if rest.duration == "whole":
+        # 전쉼표: line4(맨 아래줄)에 매달린 두꺼운 직사각형
+        h = int(spec.staff_gap * 0.55)
+        y0 = line4_y - h
+        cv2.rectangle(img, (rest.x - w_half, y0), (rest.x + w_half, line4_y), 0, -1)
+        return {"x": rest.x, "y_center": (y0 + line4_y) // 2, "duration": "whole",
+                "bbox": (rest.x - w_half, y0, w_half * 2, h)}
+
+    elif rest.duration == "half":
+        # 2분쉼표: line3 위에 얹힌 직사각형
+        h = int(spec.staff_gap * 0.4)
+        y0 = line3_y - h
+        cv2.rectangle(img, (rest.x - w_half, y0), (rest.x + w_half, line3_y), 0, -1)
+        return {"x": rest.x, "y_center": (y0 + line3_y) // 2, "duration": "half",
+                "bbox": (rest.x - w_half, y0, w_half * 2, h)}
+
+    elif rest.duration == "quarter":
+        # 4분쉼표: 지그재그 선 (단순화)
+        cx, cy = rest.x, spec.staff_top + 2 * spec.staff_gap
+        pts = np.array([
+            [cx - 4, cy - 12], [cx + 4, cy - 4],
+            [cx - 4, cy],      [cx + 5, cy + 8],
+            [cx + 1, cy + 14],
+        ], dtype=np.int32)
+        cv2.polylines(img, [pts], False, 0, 2)
+        return {"x": rest.x, "y_center": cy, "duration": "quarter",
+                "bbox": (cx - 6, cy - 14, 12, 30)}
+
+    else:  # eighth
+        # 8분쉼표: 작은 사선 + 점
+        cx, cy = rest.x, spec.staff_top + 2 * spec.staff_gap
+        cv2.line(img, (cx - 3, cy + 8), (cx + 5, cy - 8), 0, 2)
+        cv2.circle(img, (cx + 6, cy - 10), 3, 0, -1)
+        return {"x": rest.x, "y_center": cy, "duration": "eighth",
+                "bbox": (cx - 4, cy - 14, 12, 26)}
+
+
 if __name__ == "__main__":
     # 간단한 동작 확인: 4분음표 몇 개를 그려서 저장
     spec = SyntheticScoreSpec(notes=[
@@ -213,7 +269,7 @@ if __name__ == "__main__":
         NoteSpec(x=500, staff_step=4, duration="whole"),
         NoteSpec(x=600, staff_step=8, duration="sixteenth"),
     ])
-    img, gt = render_synthetic_staff(spec)
+    img, gt, _ = render_synthetic_staff(spec)
     cv2.imwrite("/tmp/synthetic_staff_demo.png", img)
     print("저장 완료: /tmp/synthetic_staff_demo.png")
     for g in gt:
