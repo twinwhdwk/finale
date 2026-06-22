@@ -63,17 +63,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      합성이미지 왕복 테스트, end-to-end E4/B4/D5/C4 판정 확인).
      `pytest 56/56 통과`.
   5. ✅ **MusicXML 생성** (`note_recognition/xml_builder.py`):
-     `notes_to_score()` - NoteDetectionResult + pitch 판정 → music21 Score.
-     박자 누산으로 4/4 마디 자동 분리. `save_musicxml()` - .musicxml 파일 저장.
-     ✅ **점음표(dotted) 지원**: `_detect_dot()`으로 음표 오른쪽 점 탐지,
-     `is_dotted=True`면 quarterLength × 1.5로 MusicXML 저장.
-     `tests/test_xml_builder.py` 13개로 검증 (점음표 탐지/false positive 방지/
-     1.5 quarterLength MusicXML 저장 포함). `pytest 69/69 통과`.
-     알려진 한계: 쉼표/코드/이성부 미처리.
+     ✅ **바라인 기반 마디 분리**: `barlines: list[int]` 파라미터로
+     StaffZone.barlines를 직접 받아 head_x 비교로 마디 배정.
+     barlines 없으면 박자 누산 fallback. 음표/쉼표 x좌표 기준 통합 정렬.
+     `_assign_events_to_measures_by_barlines()` / `_by_beat()` 두 전략.
+     ✅ **조표(key signature)**: `key_sig` 파라미터로 음이름에 accidental 반영.
+     `key_signature.py` 신규: `get_accidental_map()` (Circle of Fifths 샵/플랫),
+     `apply_key_signature()` (임시표 우선). `tests/test_key_signature.py` 14개.
+     ✅ **점음표(dotted)**: is_dotted=True이면 quarterLength×1.5 + dots=1.
+     ✅ **전/2분쉼표(rest)**: DetectedRest → music21 note.Rest() 변환.
+     `pytest 89/89 통과`.
   6. ✅ **opencv 엔진 main.py 연동** (`opencv_runner.py`):
-     `python main.py full --engine opencv --pdf ... --orig ...` 사용 가능.
-     `compare-engines` 커맨드도 audiveris/homr/opencv 3개 엔진 비교로 확장.
-     주의: 파라미터가 합성 이미지 기준이라 실제 PDF에서 튜닝 필요.
+     barlines, x_start 모두 연결. `compare-engines` 3개 엔진 비교.
+  7. ✅ **패키지 공개 API** (`note_recognition/__init__.py`):
+     `from note_recognition import detect_notes, save_musicxml` 한 줄로 사용 가능.
+     헤더 영역 마스킹: `detect_notes(..., x_start=N)`으로 음자리표/박자표 영역 제외.
 
 ## Commands
 

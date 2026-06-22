@@ -26,10 +26,11 @@
    - 판정된 기둥 방향으로 stem_x 추정 위치가 달라짐 (stem_up → 오른쪽, stem_down → 왼쪽)
 
 ## 알려진 한계 (현재 버전)
-- 빔(beam, 여러 음표를 잇는 가로 선)이 있는 경우 연결성분이 합쳐질 수 있음.
-  현재는 단일 음표(깃발 개별) 케이스만 다루며, 빔 분리는 향후 단계에서 처리.
-- 점음표(.dotted), 두잇음표(duplet), 쉼표는 미구현 (향후 단계).
-- 음높이(pitch) 판정은 이 모듈의 담당이 아님 → note_pitcher.py (미구현).
+- 빔(beam, 여러 음표를 잇는 가로 선)으로 묶인 케이스: beam_splitter.py로 처리 (2~3개 묶음 검증 완료)
+- 점음표(.dotted): _detect_dot()으로 지원 (is_dotted 필드)
+- 쉼표: 전/2분쉼표(블록형) 지원. 4분/8분쉼표(선형)는 온음표와 특성이 겹쳐 미지원 (TODO)
+- 음높이(pitch) 판정: note_pitcher.py에서 처리 (이 모듈의 담당 아님)
+- 코드(chord), 이성부 분리 미구현
 """
 
 from dataclasses import dataclass, field
@@ -393,6 +394,7 @@ def detect_notes(
     staff_gap: int,
     line_thickness: int,
     min_horizontal_run: int | None = None,
+    x_start: int = 0,
 ) -> NoteDetectionResult:
     """
     오선 제거 → 연결성분 분리 → 음가 분류를 한 번에 수행.
@@ -401,11 +403,16 @@ def detect_notes(
         img_gray:           그레이스케일 원본 (전체 페이지 또는 오선 크롭)
         staff_top_y:        오선 5줄 최상단 y (_detect_staves 결과)
         staff_bot_y:        오선 5줄 최하단 y
-        staff_gap:          인접 오선 줄 사이 간격(픽셀). pitch 판정에도 필요하므로
-                           정확하게 넘겨주는 것을 권장. 0이면 bbox에서 추정 시도.
+        staff_gap:          인접 오선 줄 사이 간격(픽셀)
         line_thickness:     오선 두께 (detect_staff_line_thickness 결과)
-        min_horizontal_run: staff_removal.remove_staff_lines로 전달할 파라미터.
+        min_horizontal_run: staff_removal.remove_staff_lines 파라미터.
                            None이면 자동(이미지 폭의 5%)
+        x_start:            음표 검출 시작 x 좌표 (기본 0). 오선 왼쪽에
+                           위치한 음자리표/박자표/조표 기호를 음표로 오분류하지
+                           않도록 실제 악보 시작 x를 지정한다.
+                           예) StaffZone.barlines가 있으면 첫 마디 시작을
+                           barlines[0] - staff_gap*2 정도로 추정하거나,
+                           pdf_parser가 감지한 첫 음표 x를 넘겨주면 됨.
 
     Returns:
         NoteDetectionResult (x순 정렬된 DetectedNote 리스트 포함)
@@ -426,14 +433,17 @@ def detect_notes(
 
     _, binary = cv2.threshold(removed, 128, 255, cv2.THRESH_BINARY_INV)
 
-    # 오선 범위에만 집중 (코드 기호, 가사 영역 제외)
-    # y 범위를 오선 영역 ± 오선간격*1.5으로 제한
-    margin = int(staff_gap * 3.5)  # 기둥 길이만큼 여유 (staff_gap*3.5가 기둥 길이)
+    # y 범위: 오선 ± 기둥 길이 여유
+    margin = int(staff_gap * 3.5)
     roi_top = max(0, staff_top_y - margin)
     roi_bot = min(img_gray.shape[0], staff_bot_y + margin)
     binary_roi = binary.copy()
     binary_roi[:roi_top, :] = 0
     binary_roi[roi_bot:, :] = 0
+
+    # x 범위: x_start 이전(음자리표/박자표/조표 기호 영역) 마스킹
+    if x_start > 0:
+        binary_roi[:, :x_start] = 0
 
     n, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_roi, connectivity=8)
 

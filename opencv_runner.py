@@ -139,12 +139,20 @@ def _process_page(
 
     for zone in zones:
         staff_gap = _staff_gap_from_zone(zone)
+        # x_start: 오선 왼쪽 헤더(음자리표/박자표/조표) 영역을 음표 검출에서 제외.
+        # 마디선이 있으면 첫 마디선에서 staff_gap*3 왼쪽을 시작점으로 추정.
+        # 마디선이 없으면 이미지 폭의 10% (일반적인 헤더 폭 추정).
+        if zone.barlines:
+            x_start = max(0, zone.barlines[0] - staff_gap * 3)
+        else:
+            x_start = img_gray.shape[1] // 10
         result = detect_notes(
             img_gray,
             staff_top_y=zone.top_y,
             staff_bot_y=zone.bot_y,
             staff_gap=staff_gap,
             line_thickness=line_thickness,
+            x_start=x_start,
         )
         all_detected_notes.extend(result.notes)
 

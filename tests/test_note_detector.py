@@ -317,3 +317,31 @@ def test_whole_note_not_misclassified_as_rest():
     )
     assert result.notes[0].duration == "whole"
     assert len(result.rests) == 0, f"온음표가 쉼표로 오분류됨: {result.rests}"
+
+
+def test_x_start_masks_header_region():
+    """
+    x_start 파라미터로 지정한 x 이전 영역의 음표는 검출에서 제외되어야 함.
+
+    실제 PDF에서 오선 왼쪽에 위치한 음자리표/박자표/조표 기호가
+    음표로 오분류되는 문제를 방지하기 위한 기능.
+    """
+    spec = SyntheticScoreSpec(notes=[
+        NoteSpec(x=100, staff_step=4, duration="quarter"),  # 헤더 영역 (제외 대상)
+        NoteSpec(x=400, staff_step=4, duration="quarter"),  # 실제 악보 영역
+    ])
+    img, gt, _ = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+
+    # x_start=0: 2개 모두 검출
+    r_all = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap,
+                         line_thickness=t, x_start=0)
+    assert len(r_all.notes) == 2
+
+    # x_start=250: x=100 음표 제외
+    r_masked = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap,
+                            line_thickness=t, x_start=250)
+    assert len(r_masked.notes) == 1, f"x_start 마스킹 실패: {len(r_masked.notes)}개 검출"
+    assert r_masked.notes[0].head_x > 250

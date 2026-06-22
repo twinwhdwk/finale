@@ -53,7 +53,8 @@ class Pitch:
     step: str           # 음이름 (C~B)
     octave: int         # 옥타브 (4=중간 C 근방)
     staff_step: int     # 오선 기준 스텝 (디버그/pitch 매핑 검증용)
-    accidental: str = ""  # "", "#", "b" (현재는 항상 "" - 임시표 미구현)
+    accidental: str = ""  # "", "#", "b". 기본 ""(조표 미적용 상태).
+                           # key_signature.apply_key_signature()로 조표 반영 가능.
 
     @property
     def name_with_octave(self) -> str:

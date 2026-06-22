@@ -14,10 +14,10 @@ note_pitcher.py의 pitch 판정을 결합해 music21 Score를 구성하고
 
 ## 알려진 한계
 
-- 임시표(accidentals): Pitch.accidental이 항상 "" (조표 인식 연동 필요 - TODO)
+- 임시표(in-measure accidental): 조표(key_sig)는 지원하나 마디 내 임시표 상태 기계 미구현
 - 코드(chord): 화음은 개별 음표로 처리
 - 2성부: 이성부 악보는 하나의 Part로 합쳐짐
-- 4분/8분쉼표: 현재 탐지 미지원 (선형 쉼표)
+- 4분/8분쉼표: note_detector._classify_rest가 선형 쉼표 미지원
 """
 
 import math
