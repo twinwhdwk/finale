@@ -79,7 +79,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      `from note_recognition import detect_notes, save_musicxml` 한 줄로 사용 가능.
      헤더 영역 마스킹: `detect_notes(..., x_start=N)`으로 음자리표/박자표 영역 제외.
 
-## Commands
+## 로컬 테스트 시 확인 우선순위 (파라미터 튜닝 가이드)
+
+실제 교과서 PDF로 `python main.py full --engine opencv --pdf ... --orig ...` 실행 시
+아래 파라미터가 실제 폰트/DPI에 맞는지 확인 필요. 합성 이미지 기준 민감도 분석 결과:
+
+| 파라미터 | 현재값 | 실제 위험도 | 설명 |
+|---|---|---|---|
+| `HEAD_FILL_THRESHOLD` | 0.47 | **높음** | 2분음표(half) 여유 0.077만 남아있어 실제 인쇄에서 오분류 가능성 가장 높음 |
+| `_NOTEHEAD_RADIUS_RATIO` | 0.55 | 중간 | staff_gap 대비 음표머리 크기. 출판사별 폰트에 따라 달라짐 |
+| `_HAS_STEM_HEIGHT_RATIO` | 2.5 | 낮음 | whole vs 기둥있는 음표 구분 여유 30px 이상으로 안전 |
+| `min_horizontal_run` | 폭의 5% | 중간 | 오선 제거 기준. DPI에 비례해 조정 필요 |
+
+**첫 테스트 권장 순서:**
+1. `python main.py full --engine opencv --pdf 교과서1페이지.pdf --orig ...` 실행
+2. 오분류 유형 확인: half→quarter 오분류가 많으면 `HEAD_FILL_THRESHOLD`를 0.43~0.45로 낮춤
+3. 음표 자체가 안 잡히면 `_NOTEHEAD_RADIUS_RATIO`를 0.50~0.60 범위에서 조정
+4. 파라미터는 `note_recognition/note_detector.py` 상단 상수에서 직접 수정
+
+
 
 ```bash
 # 단일 PDF 변환 + XML 비교 + HTML 리포트 (가장 많이 쓰는 명령)

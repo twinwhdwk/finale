@@ -39,17 +39,22 @@ import cv2
 import numpy as np
 
 
-# ── 상수 ──────────────────────────────────────────────────────────────
+# ── 상수 (config.ini [opencv] 섹션으로 오버라이드 가능) ───────────────
 
-HEAD_FILL_THRESHOLD = 0.47   # 이 값 이상이면 채워진 머리 (quarter 이하)
+HEAD_FILL_THRESHOLD = 0.47   # 채워진 머리 판정 임계값 (quarter 이하)
 MIN_NOTE_AREA = 50            # 노이즈/아티팩트 제거용 최소 픽셀 수
-# 표준 음악 표기 비율: notehead 높이(단축) ≈ staff_gap * 0.55~0.65.
-# (합성 이미지 실측: staff_gap=20, notehead_radius=11 → 11/20=0.55)
-_NOTEHEAD_RADIUS_RATIO = 0.55
-# 기둥 판정 임계값 배율: whole(기둥 없음)의 bbox h ≈ notehead_radius*2,
-# quarter(기둥 있음)의 bbox h ≈ staff_gap*3.5 + notehead_radius*2.
-# staff_gap*2.5가 두 케이스 사이 중간에 위치 (합성 이미지 실측 확인).
-_HAS_STEM_HEIGHT_RATIO = 2.5
+_NOTEHEAD_RADIUS_RATIO = 0.55  # notehead 반지름 / staff_gap 비율
+_HAS_STEM_HEIGHT_RATIO = 2.5   # 기둥 판정 높이 배율
+
+# config.ini가 있으면 [opencv] 섹션 값으로 덮어쓰기
+try:
+    import config_loader as _cl
+    _ocv = _cl.get_opencv_params()
+    HEAD_FILL_THRESHOLD    = _ocv["head_fill_threshold"]
+    _NOTEHEAD_RADIUS_RATIO = _ocv["notehead_radius_ratio"]
+    _HAS_STEM_HEIGHT_RATIO = _ocv["has_stem_height_ratio"]
+except Exception:
+    pass  # config.ini 없거나 형식 오류 → 기본값 유지
 
 
 @dataclass
