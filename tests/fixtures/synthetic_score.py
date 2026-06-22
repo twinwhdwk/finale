@@ -30,6 +30,7 @@ class NoteSpec:
     duration: str            # "whole" | "half" | "quarter" | "eighth" | "sixteenth"
     stem_up: bool = True     # 기둥 방향
     beam_to_next: bool = False  # True면 다음 음표와 빔(beam)으로 연결 (단일 빔만 지원)
+    dotted: bool = False     # True면 점음표 (quarterLength × 1.5)
 
 
 @dataclass
@@ -184,11 +185,18 @@ def _draw_note(img: np.ndarray, note: NoteSpec, head_y: int, spec: SyntheticScor
             ly = _staff_step_to_y(s, spec.staff_top, spec.staff_gap)
             cv2.line(img, (x - r - 4, ly), (x + r + 4, ly), 0, 2)
 
+    # ── 점음표: 머리 오른쪽에 작은 원 ──
+    if note.dotted:
+        dot_x = x + r + 6   # 머리 오른쪽 가장자리에서 6px 추가
+        dot_y = head_y - int(spec.staff_gap / 4)  # 약간 위 (칸 안으로)
+        cv2.circle(img, (dot_x, dot_y), 3, 0, -1)
+
     return {
         "x": x,
         "head_y": head_y,
         "staff_step": note.staff_step,
         "duration": note.duration,
+        "dotted": note.dotted,
         "is_filled": is_filled,
         "has_stem": has_stem,
         "n_flags": n_flags,

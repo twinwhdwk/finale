@@ -167,21 +167,40 @@ def test_full_pipeline_end_to_end(tmp_path: Path):
     reloaded = converter.parse(out)
     reloaded_notes = list(reloaded.flatten().notes)
 
-    # 검출된 음표 수 일치
     assert len(reloaded_notes) == len(result.notes), (
         f"음표 수: {len(reloaded_notes)} != {len(result.notes)}"
     )
 
-    # 음가 일치 (quarterLength 기준)
     expected_ql = [1.0, 1.0, 0.5, 2.0]
     for i, (n, exp_ql) in enumerate(zip(reloaded_notes, expected_ql)):
         assert n.quarterLength == exp_ql, (
             f"음표[{i}] 음가: 기대={exp_ql}, 실제={n.quarterLength}"
         )
 
-    print("\n  end-to-end 결과:")
-    for i, n in enumerate(reloaded_notes):
-        print(f"    [{i+1}] {n.nameWithOctave} {n.duration.type}")
+
+def test_dotted_note_detected(tmp_path: Path):
+    """점4분음표(is_dotted=True)가 올바르게 탐지되어야 함."""
+    result, _ = _detect([NoteSpec(x=300, staff_step=4, duration="quarter", dotted=True)])
+    assert len(result.notes) == 1
+    assert result.notes[0].is_dotted is True, "점음표가 탐지되지 않음"
+
+
+def test_non_dotted_note_not_marked(tmp_path: Path):
+    """일반 4분음표는 is_dotted=False이어야 함 (false positive 방지)."""
+    result, _ = _detect([NoteSpec(x=300, staff_step=4, duration="quarter", dotted=False)])
+    assert len(result.notes) == 1
+    assert result.notes[0].is_dotted is False
+
+
+def test_dotted_quarter_saves_as_1_5_quarter_length(tmp_path: Path):
+    """점4분음표는 MusicXML에서 quarterLength=1.5로 저장되어야 함."""
+    result, _ = _detect([NoteSpec(x=300, staff_step=4, duration="quarter", dotted=True)])
+    out = str(tmp_path / "dotted.musicxml")
+    save_musicxml(result, out)
+    reloaded = converter.parse(out)
+    ns = list(reloaded.flatten().notes)
+    assert len(ns) == 1
+    assert ns[0].quarterLength == 1.5, f"점4분음표 quarterLength={ns[0].quarterLength} (기대:1.5)"
 
 
 if __name__ == "__main__":

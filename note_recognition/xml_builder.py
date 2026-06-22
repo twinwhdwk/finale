@@ -94,6 +94,8 @@ def notes_to_score(
 
     for detected in detection_result.notes:
         ql = _DURATION_TO_QUARTER.get(detected.duration, 1.0)
+        if detected.is_dotted:
+            ql *= 1.5
 
         # 이 음표를 추가하면 마디가 넘치는지 확인 (허용 오차 1e-6)
         if accumulated + ql > measure_length + 1e-6:
@@ -110,7 +112,11 @@ def notes_to_score(
         )
 
         n = note.Note(pitch.name_with_octave)
-        n.duration = duration.Duration(_DURATION_TYPE[detected.duration])
+        if detected.is_dotted:
+            n.duration = duration.Duration(_DURATION_TYPE[detected.duration])
+            n.duration.dots = 1
+        else:
+            n.duration = duration.Duration(_DURATION_TYPE[detected.duration])
 
         current_measure.append(n)
         accumulated += ql

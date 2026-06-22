@@ -62,6 +62,7 @@ class DetectedNote:
     stem_up: bool | None              # True=기둥 위, False=기둥 아래, None=기둥 없음(whole)
     head_fill_density: float          # 머리 영역 픽셀 밀도 (디버그용)
     component_area: int               # 연결성분 전체 픽셀 수 (디버그용)
+    is_dotted: bool = False           # 점음표 여부 (quarter_length × 1.5)
 
 
 @dataclass
@@ -124,10 +125,11 @@ def _classify_duration(
             max(0, head_x - notehead_radius): head_x + notehead_radius
         ]
         density = _pixel_density(head_region)
+        is_dotted = _detect_dot(binary, bbox, head_x, head_y, notehead_radius)
         return DetectedNote(
             bbox=(x, y, w, h), head_x=head_x, head_y=head_y,
             duration="whole", n_flags=0, stem_up=None,
-            head_fill_density=density,
+            head_fill_density=density, is_dotted=is_dotted,
             component_area=binary[y:bot, x:x+w].sum() // 255,
         )
 
@@ -136,8 +138,6 @@ def _classify_duration(
     head_y_if_down = y   + notehead_radius   # stem_down이면 머리는 bbox 상단
 
     if stem_up_hint is not None:
-        # 빔 분리에서 얻은 방향 힌트가 픽셀 밀도 추정보다 신뢰할 수 있음
-        # (빔이 bbox에 포함돼 밀도 추정이 틀리는 케이스를 방지)
         stem_up_guess = stem_up_hint
     else:
         region_up   = binary[head_y_if_up - notehead_radius:   head_y_if_up   + notehead_radius, x:x+w]
@@ -151,15 +151,11 @@ def _classify_duration(
 
     head_y = head_y_if_up if stem_up_guess else head_y_if_down
 
-    # head_x: stem_x 힌트가 있으면 기둥에서 역산, 없으면 bbox 중심
     if stem_x_hint is not None:
         if stem_up_guess:
-            # stem_up: 기둥이 머리 오른쪽 가장자리에 붙음
             head_x = stem_x_hint - (notehead_radius - 2)
         else:
-            # stem_down: 기둥이 머리 왼쪽 가장자리에 붙음
             head_x = stem_x_hint + (notehead_radius - 2)
-        # bbox 범위를 벗어나면 클램프
         head_x = int(np.clip(head_x, x, x + w))
     else:
         head_x = x + w // 2
@@ -171,12 +167,13 @@ def _classify_duration(
     ]
     head_density = _pixel_density(head_region)
     is_filled = (head_density >= HEAD_FILL_THRESHOLD)
+    is_dotted = _detect_dot(binary, bbox, head_x, head_y, notehead_radius)
 
     if not is_filled:
         return DetectedNote(
             bbox=(x, y, w, h), head_x=head_x, head_y=head_y,
             duration="half", n_flags=0, stem_up=stem_up_guess,
-            head_fill_density=head_density,
+            head_fill_density=head_density, is_dotted=is_dotted,
             component_area=binary[y:bot, x:x+w].sum() // 255,
         )
 
@@ -187,7 +184,7 @@ def _classify_duration(
     return DetectedNote(
         bbox=(x, y, w, h), head_x=head_x, head_y=head_y,
         duration=duration, n_flags=n_flags, stem_up=stem_up_guess,
-        head_fill_density=head_density,
+        head_fill_density=head_density, is_dotted=is_dotted,
         component_area=binary[y:bot, x:x+w].sum() // 255,
     )
 
@@ -198,6 +195,60 @@ def _pixel_density(region: np.ndarray) -> float:
     if total == 0:
         return 0.0
     return float(region.sum()) / (255 * total)
+
+
+def _detect_dot(
+    binary: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    head_x: int,
+    head_y: int,
+    notehead_radius: int,
+) -> bool:
+    """
+    음표 오른쪽에서 점음표의 점(augmentation dot)을 탐지한다.
+
+    점은 음표머리 오른쪽 가장자리에서 1~2배 반지름 거리에 위치하는
+    작은 원(2~4px). 해당 영역에서 크기가 적절한 연결성분이 있으면 점으로 본다.
+
+    Args:
+        binary:          BINARY_INV 기준 이진 이미지
+        bbox:            음표 연결성분 bbox (x,y,w,h)
+        head_x, head_y:  음표머리 중심 추정값
+        notehead_radius: 음표머리 반지름
+
+    Returns:
+        점음표이면 True
+    """
+    h_img, w_img = binary.shape
+
+    # 점이 위치할 x 범위: 머리 오른쪽 끝(head_x + r)부터 ~2*r 범위
+    dot_x0 = max(0, head_x + notehead_radius)
+    dot_x1 = min(w_img, head_x + notehead_radius * 3)
+
+    # y 범위: 머리 중심 ± half_step (칸 중간쯤에 위치)
+    half_step = notehead_radius // 2
+    dot_y0 = max(0, head_y - notehead_radius)
+    dot_y1 = min(h_img, head_y + notehead_radius)
+
+    if dot_x0 >= dot_x1 or dot_y0 >= dot_y1:
+        return False
+
+    dot_region = binary[dot_y0:dot_y1, dot_x0:dot_x1].copy()
+    if not dot_region.any():
+        return False
+
+    n, _, stats, _ = cv2.connectedComponentsWithStats(dot_region, connectivity=8)
+    # 점의 크기: area 4~60px (너무 크면 음표머리나 다른 음표, 너무 작으면 노이즈)
+    DOT_MIN_AREA = 4
+    DOT_MAX_AREA = 60
+    for i in range(1, n):
+        area = int(stats[i][4])
+        dw, dh = int(stats[i][2]), int(stats[i][3])
+        # 점: 정사각형에 가까운 작은 blob
+        aspect = max(dw, dh) / max(1, min(dw, dh))
+        if DOT_MIN_AREA <= area <= DOT_MAX_AREA and aspect < 2.5:
+            return True
+    return False
 
 
 def _count_flags(

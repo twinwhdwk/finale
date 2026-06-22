@@ -48,6 +48,9 @@ def _convert_and_resolve_single_xml(pdf_path: str, conv_dir: str, engine: str) -
         dpi = config_loader.get_homr_dpi()
         gpu = config_loader.get_homr_gpu()
         xml_paths = convert_pdf_to_xml(pdf_path, conv_dir, dpi=dpi, gpu=gpu)
+    elif engine == "opencv":
+        from opencv_runner import convert_pdf_to_xml
+        xml_paths = convert_pdf_to_xml(pdf_path, conv_dir)
     else:
         from pdf_to_xml import convert_pdf_to_xml
         xml_paths = convert_pdf_to_xml(pdf_path, conv_dir)
@@ -327,7 +330,7 @@ def cmd_compare_engines(args):
     pdf_chords, pdf_lyrics = _extract_pdf_data(args.pdf)
 
     results = {}
-    for engine in ("audiveris", "homr"):
+    for engine in ("audiveris", "homr", "opencv"):
         print(f"\n{'='*60}\n[엔진: {engine}]\n{'='*60}")
         try:
             pdf_xml = _convert_and_resolve_single_xml(args.pdf, str(conv_dir / engine), engine)
@@ -350,15 +353,16 @@ def cmd_compare_engines(args):
         save_html(result, str(html_path))
 
     # ── 비교 요약 ──
-    print(f"\n{'='*60}\n[엔진 비교 요약]\n{'='*60}")
-    header = f"{'항목':<20}{'audiveris':>14}{'homr':>14}"
+    print(f"\n{'='*72}\n[엔진 비교 요약]\n{'='*72}")
+    header = f"{'항목':<20}{'audiveris':>14}{'homr':>14}{'opencv':>14}"
     print(header)
     print("-" * len(header))
 
     def _row(label, fn):
-        a = fn(results["audiveris"]) if results["audiveris"] else "-"
-        h = fn(results["homr"])      if results["homr"]      else "-"
-        print(f"{label:<20}{str(a):>14}{str(h):>14}")
+        a = fn(results["audiveris"]) if results.get("audiveris") else "-"
+        h = fn(results["homr"])      if results.get("homr")      else "-"
+        o = fn(results["opencv"])    if results.get("opencv")    else "-"
+        print(f"{label:<20}{str(a):>14}{str(h):>14}{str(o):>14}")
 
     _row("총 불일치", lambda r: len(r.discrepancies))
     _row("음표 오류",   lambda r: r.note_errors)
@@ -373,11 +377,15 @@ def cmd_compare_engines(args):
     if results.get("homr") is not None:
         print(
             "\n[참고] homr(현재 0.6.2)는 슬러/타이 인식 결과를 MusicXML에 "
-            "출력하지 않도록 비활성화되어 있습니다 (homr 소스 내 'Disabled "
-            "slurs and ties until the detection is more robust' 주석 참조).\n"
-            "homr의 '타이 의심' 건수는 항상 0에 가깝게 나올 수 있으니 "
-            "이 항목만으로 엔진 우열을 판단하지 마세요. 음높이/리듬 정확도 "
-            "비교 용도로만 활용하세요."
+            "출력하지 않으므로 '타이' 항목은 비교 대상 외.\n"
+            "음높이/리듬 정확도 비교 용도로만 활용하세요."
+        )
+    if results.get("opencv") is not None:
+        print(
+            "\n[참고] opencv 엔진은 자체 파이프라인(note_recognition/)으로 "
+            "합성 이미지 기준으로 파라미터가 설정돼 있습니다.\n"
+            "실제 교과서 PDF에서 정확도 차이가 클 수 있으며, 로컬 실측 후 "
+            "임계값 튜닝이 권장됩니다."
         )
 
 
@@ -435,7 +443,7 @@ def main():
     p_full.add_argument("--output-dir", help="변환 XML 저장 폴더 (기본값: config.ini converted_xml_dir)")
     p_full.add_argument("--part", type=int, default=None, help="파트 인덱스 (기본값: config.ini)")
     p_full.add_argument("--html", help="HTML 리포트 저장 경로 (기본값: config.ini report_dir)")
-    p_full.add_argument("--engine", choices=["audiveris", "homr"], default="audiveris",
+    p_full.add_argument("--engine", choices=["audiveris", "homr", "opencv"], default="audiveris",
                         help="OMR 변환 엔진 선택 (기본값: audiveris)")
     p_full.set_defaults(func=cmd_full)
 
