@@ -46,11 +46,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      실험으로 발견되어, 가로 연속성 기준을 추가해 해결. `tests/test_staff_removal.py`
      6개로 검증 (빈 영역 100% 제거, 채워진 머리 보존율 ≥70%, 빈 머리가
      오선으로 오인되지 않음, 5종 음가 전부 생존 확인).
-  3. ⬜ **미착수**: 음표 객체 분리 (오선 제거 후 연결성분 분석으로 개별
-     음표 단위 분리), 머리 모양 분류(채워짐 vs 빔, cv2.contourArea나
-     내부 픽셀 밀도 활용), 기둥/깃발 검출 및 개수로 음가 판정, 오선 기준
-     y좌표 → 음높이(pitch) 매핑, 최종 MusicXML 생성(music21 또는 직접
-     빌드).
+  3. ✅ **음표 객체 분리 및 음가 분류** (`note_recognition/note_detector.py`):
+     연결성분 → 기둥 유무/머리 밀도/깃발 개수로 5종 음가 분류.
+     `note_recognition/beam_splitter.py` 신규: 빔으로 묶인 컴포넌트를
+     세로 투영 피크 기반으로 개별 음표로 분할. 3개 묶음까지 검증.
+     `tests/test_note_detector.py` 17개로 검증 (stem_up/down 전 음가,
+     빔 그룹 2/3개, 혼합 마디). `pytest 43/43 통과`.
+  4. ⬜ **미착수**: 오선 y좌표 → 음높이(pitch) 매핑 (`head_y` → 음이름),
+     점음표/쉼표 처리, 최종 MusicXML 생성(music21 또는 직접 빌드).
 
 ## Commands
 

@@ -176,6 +176,65 @@ def test_stem_down_half_classified_correctly():
     assert result.notes[0].n_flags == 0
 
 
+# ── 빔(beam) 연결 테스트 ─────────────────────────────────────────────
+
+def test_beamed_eighth_notes_split_correctly():
+    """
+    빔으로 연결된 8분음표 2개가 개별 음표로 분리되어야 함.
+
+    회귀 방지: 빔이 없으면 두 음표는 별개 연결성분으로 잡히지만, 빔이 있으면
+    기둥 끝이 연결되어 하나의 큰 컴포넌트가 됨. beam_splitter.py의 세로
+    투영 피크 기반 분할 알고리즘이 이를 처리해야 함.
+    """
+    result, gt, _ = _run([
+        NoteSpec(x=200, staff_step=4, duration="eighth", beam_to_next=True),
+        NoteSpec(x=320, staff_step=6, duration="eighth"),
+    ])
+    assert len(result.notes) == 2, f"빔 분리 실패: {len(result.notes)}개 검출"
+    assert result.notes[0].duration == "eighth"
+    assert result.notes[1].duration == "eighth"
+
+
+def test_beamed_sixteenth_notes_split_correctly():
+    """빔으로 연결된 16분음표 2개 - 분리 및 sixteenth 분류 검증.
+
+    주의: 빔 그룹에서 분리된 서브bbox에 빔이 일부 포함돼 깃발이 2개 이상
+    잡힐 수 있지만, _classify_duration의 {2: sixteenth}.get(n, 'sixteenth')
+    로직으로 2+ 모두 sixteenth로 처리되므로 분류 정확도는 유지됨.
+    """
+    result, gt, _ = _run([
+        NoteSpec(x=200, staff_step=4, duration="sixteenth", beam_to_next=True),
+        NoteSpec(x=320, staff_step=6, duration="sixteenth"),
+    ])
+    assert len(result.notes) == 2
+    assert all(n.duration == "sixteenth" for n in result.notes)
+    assert all(n.n_flags >= 2 for n in result.notes)  # 빔 포함으로 2 이상일 수 있음
+
+
+def test_mixed_beamed_and_independent_notes():
+    """빔 그룹과 독립 음표가 섞인 마디 - 모두 정확히 분류되어야 함."""
+    notes_spec = [
+        NoteSpec(x=150, staff_step=4, duration="quarter"),
+        NoteSpec(x=280, staff_step=4, duration="eighth", beam_to_next=True),
+        NoteSpec(x=400, staff_step=6, duration="eighth"),
+        NoteSpec(x=530, staff_step=2, duration="half"),
+    ]
+    result, gt, _ = _run(notes_spec)
+    assert len(result.notes) == 4
+    assert [n.duration for n in result.notes] == ["quarter", "eighth", "eighth", "half"]
+
+
+def test_three_beamed_eighth_notes():
+    """3개 연속 빔 묶음도 개별 분리되어야 함."""
+    result, gt, _ = _run([
+        NoteSpec(x=150, staff_step=4, duration="eighth", beam_to_next=True),
+        NoteSpec(x=270, staff_step=6, duration="eighth", beam_to_next=True),
+        NoteSpec(x=390, staff_step=2, duration="eighth"),
+    ])
+    assert len(result.notes) == 3, f"3개 빔 분리 실패: {len(result.notes)}개"
+    assert all(n.duration == "eighth" for n in result.notes)
+
+
 if __name__ == "__main__":
     tests = [
         test_whole_note_classified_correctly,
@@ -191,6 +250,10 @@ if __name__ == "__main__":
         test_stem_down_eighth_classified_correctly,
         test_stem_down_sixteenth_classified_correctly,
         test_stem_down_half_classified_correctly,
+        test_beamed_eighth_notes_split_correctly,
+        test_beamed_sixteenth_notes_split_correctly,
+        test_mixed_beamed_and_independent_notes,
+        test_three_beamed_eighth_notes,
     ]
     passed, failed = 0, 0
     for t in tests:

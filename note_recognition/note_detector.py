@@ -87,14 +87,22 @@ def _classify_duration(
     binary: np.ndarray,
     bbox: tuple[int, int, int, int],
     notehead_radius: int,
+    stem_up_hint: bool | None = None,
+    stem_x_hint: int | None = None,
 ) -> DetectedNote:
     """
     단일 연결성분(bbox)으로부터 음표 정보를 분류해 DetectedNote를 반환.
 
     Args:
-        binary:          오선 제거된 이진 이미지 (255=음표, 0=배경, BINARY_INV 기준)
+        binary:          오선 제거된 이진 이미지
         bbox:            (x, y, w, h) 연결성분 바운딩 박스
         notehead_radius: 음표머리 반지름 추정값 (픽셀)
+        stem_up_hint:    빔 분리에서 얻은 기둥 방향 힌트 (None이면 자체 추정)
+        stem_x_hint:     빔 분리에서 얻은 기둥 x 좌표 힌트.
+                         이 값이 있으면 head_x 추정에 사용 (bbox 중심보다 정확함).
+                         기둥은 머리의 가장자리에 붙으므로:
+                           stem_up → 기둥은 오른쪽 → head_x ≈ stem_x - notehead_radius
+                           stem_down → 기둥은 왼쪽 → head_x ≈ stem_x + notehead_radius
     """
     x, y, w, h, = bbox
     bot = y + h
@@ -124,28 +132,37 @@ def _classify_duration(
         )
 
     # ── 2단계: 기둥 방향 판정 ──
-    # 음표머리는 기둥이 끝나는 반대쪽에 가까이 있음.
-    # stem_up=True  → 기둥이 위로 → bbox 하단 근처에 머리
-    # stem_up=False → 기둥이 아래로 → bbox 상단 근처에 머리
-    # 머리 y = bbox 상단 또는 하단에서 notehead_radius만큼 안쪽 추정
-    head_y_if_up   = bot - notehead_radius          # 기둥이 위라면 머리는 아래쪽
-    head_y_if_down = y   + notehead_radius           # 기둥이 아래라면 머리는 위쪽
+    head_y_if_up   = bot - notehead_radius   # stem_up이면 머리는 bbox 하단
+    head_y_if_down = y   + notehead_radius   # stem_down이면 머리는 bbox 상단
 
-    region_up   = binary[head_y_if_up - notehead_radius:   head_y_if_up   + notehead_radius, x:x+w]
-    region_down = binary[head_y_if_down - notehead_radius: head_y_if_down + notehead_radius, x:x+w]
-
-    density_up   = _pixel_density(region_up)
-    density_down = _pixel_density(region_down)
-
-    # 더 밀한 쪽이 머리 위치. 같으면 기둥 길이로 다시 판정.
-    if abs(density_up - density_down) < 0.05:
-        # 애매하면 bbox의 위아래 비대칭으로 판단 (기둥이 있는 쪽이 더 길다)
-        stem_up_guess = True  # 기본값
+    if stem_up_hint is not None:
+        # 빔 분리에서 얻은 방향 힌트가 픽셀 밀도 추정보다 신뢰할 수 있음
+        # (빔이 bbox에 포함돼 밀도 추정이 틀리는 케이스를 방지)
+        stem_up_guess = stem_up_hint
     else:
-        stem_up_guess = (density_up >= density_down)
+        region_up   = binary[head_y_if_up - notehead_radius:   head_y_if_up   + notehead_radius, x:x+w]
+        region_down = binary[head_y_if_down - notehead_radius: head_y_if_down + notehead_radius, x:x+w]
+        density_up   = _pixel_density(region_up)
+        density_down = _pixel_density(region_down)
+        if abs(density_up - density_down) < 0.05:
+            stem_up_guess = True
+        else:
+            stem_up_guess = (density_up >= density_down)
 
     head_y = head_y_if_up if stem_up_guess else head_y_if_down
-    head_x = x + w // 2   # 가로 중심 (기둥은 머리 좌우 가장자리에 붙으므로 큰 오차 없음)
+
+    # head_x: stem_x 힌트가 있으면 기둥에서 역산, 없으면 bbox 중심
+    if stem_x_hint is not None:
+        if stem_up_guess:
+            # stem_up: 기둥이 머리 오른쪽 가장자리에 붙음
+            head_x = stem_x_hint - (notehead_radius - 2)
+        else:
+            # stem_down: 기둥이 머리 왼쪽 가장자리에 붙음
+            head_x = stem_x_hint + (notehead_radius - 2)
+        # bbox 범위를 벗어나면 클램프
+        head_x = int(np.clip(head_x, x, x + w))
+    else:
+        head_x = x + w // 2
 
     # ── 3단계: 머리 밀도 → half vs (quarter/eighth/sixteenth) 구분 ──
     head_region = binary[
@@ -276,6 +293,7 @@ def detect_notes(
         NoteDetectionResult (x순 정렬된 DetectedNote 리스트 포함)
     """
     from note_recognition.staff_removal import remove_staff_lines
+    from note_recognition.beam_splitter import split_all_beam_components
 
     if staff_gap <= 0:
         staff_gap = max(10, (staff_bot_y - staff_top_y) // 4)
@@ -301,14 +319,16 @@ def detect_notes(
 
     n, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_roi, connectivity=8)
 
-    notes: list[DetectedNote] = []
-    for i in range(1, n):  # 0은 배경
-        area = stats[i][4]
-        if area < MIN_NOTE_AREA:
-            continue  # 노이즈/아티팩트 제거
+    # 빔으로 묶인 컴포넌트는 분할, 나머지는 그대로 → dict 목록
+    all_items = split_all_beam_components(binary_roi, stats, notehead_radius, min_area=MIN_NOTE_AREA)
 
-        cx, cy, cw, ch = stats[i][0], stats[i][1], stats[i][2], stats[i][3]
-        note = _classify_duration(binary_roi, (cx, cy, cw, ch), notehead_radius)
+    notes: list[DetectedNote] = []
+    for item in all_items:
+        note = _classify_duration(
+            binary_roi, item["bbox"], notehead_radius,
+            stem_up_hint=item["stem_up"],
+            stem_x_hint=item["stem_x"],
+        )
         notes.append(note)
 
     # x순 정렬 (악보 읽기 순서)

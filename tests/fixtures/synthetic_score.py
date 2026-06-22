@@ -28,8 +28,8 @@ class NoteSpec:
     staff_step: int         # 오선 기준 위치. 0=맨 아래줄(line4), 1=그 위 칸,
                              # 2=line3, ... 위로 갈수록 +1 (반음계 아님, 온음계 디아토닉 스텝)
     duration: str            # "whole" | "half" | "quarter" | "eighth" | "sixteenth"
-    stem_up: bool = True     # 기둥 방향 (staff_step이 중간(4) 이상이면 보통 아래로 그리는게 정석이나
-                             # 단순화를 위해 명시적으로 지정)
+    stem_up: bool = True     # 기둥 방향
+    beam_to_next: bool = False  # True면 다음 음표와 빔(beam)으로 연결 (단일 빔만 지원)
 
 
 @dataclass
@@ -75,11 +75,45 @@ def render_synthetic_staff(spec: SyntheticScoreSpec) -> tuple[np.ndarray, list[d
         cv2.line(img, (margin, y), (spec.width - margin, y), 0, spec.line_thickness)
 
     ground_truth = []
+    stem_tops: dict[int, int] = {}   # index -> stem_top_y (빔 그리기용)
+    stem_bots: dict[int, int] = {}   # index -> stem_bot_y
 
-    for note in spec.notes:
+    for idx, note in enumerate(spec.notes):
         head_y = _staff_step_to_y(note.staff_step, spec.staff_top, spec.staff_gap)
         gt = _draw_note(img, note, head_y, spec)
         ground_truth.append(gt)
+
+        # 기둥 끝 y 저장 (빔 연결용)
+        if note.duration != "whole":
+            stem_len = spec.staff_gap * 3.5
+            r = spec.notehead_radius
+            stem_x = note.x + r - 2 if note.stem_up else note.x - r + 2
+            if note.stem_up:
+                stem_tops[idx] = int(head_y - stem_len)
+            else:
+                stem_bots[idx] = int(head_y + stem_len)
+            gt["stem_x"] = stem_x
+
+    # ── 빔(beam) 연결선 그리기 ──
+    for idx, note in enumerate(spec.notes):
+        if not note.beam_to_next or idx + 1 >= len(spec.notes):
+            continue
+        next_note = spec.notes[idx + 1]
+        if note.duration not in ("eighth", "sixteenth"):
+            continue
+
+        r = spec.notehead_radius
+        stem_x1 = note.x + r - 2 if note.stem_up else note.x - r + 2
+        stem_x2 = next_note.x + r - 2 if next_note.stem_up else next_note.x - r + 2
+
+        if note.stem_up:
+            by1 = stem_tops.get(idx, spec.staff_top)
+            by2 = stem_tops.get(idx + 1, spec.staff_top)
+        else:
+            by1 = stem_bots.get(idx, spec.staff_top + 4 * spec.staff_gap)
+            by2 = stem_bots.get(idx + 1, spec.staff_top + 4 * spec.staff_gap)
+
+        cv2.line(img, (stem_x1, by1), (stem_x2, by2), 0, 4)
 
     return img, ground_truth
 
