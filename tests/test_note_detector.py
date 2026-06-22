@@ -1,0 +1,171 @@
+"""
+note_recognition.note_detector 단위 테스트.
+
+합성 악보 이미지(tests/fixtures/synthetic_score.py)로 음표 검출 및
+음가(duration) 분류 알고리즘을 검증한다.
+
+검증 범주:
+- 5종 음가 기본 분류 (whole/half/quarter/eighth/sixteenth)
+- 여러 음표가 섞인 마디에서 개수 및 순서(x 정렬) 검증
+- 오선 높이에 따른 음표 위치 변화에 대한 견고성
+- stem_down(기둥 아래 방향) 음표 분류
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+
+from synthetic_score import SyntheticScoreSpec, NoteSpec, render_synthetic_staff  # noqa: E402
+from note_recognition.staff_removal import detect_staff_line_thickness  # noqa: E402
+from note_recognition.note_detector import detect_notes  # noqa: E402
+
+
+def _run(notes_spec: list[NoteSpec], **kwargs) -> tuple:
+    """합성 이미지 생성 + 오선 두께 측정 + 음표 검출을 한 번에 수행."""
+    spec = SyntheticScoreSpec(notes=notes_spec, **kwargs)
+    img, gt = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+    return result, gt, spec
+
+
+# ── 5종 음가 개별 분류 테스트 ─────────────────────────────────────────
+
+def test_whole_note_classified_correctly():
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="whole")])
+    assert len(result.notes) == 1
+    assert result.notes[0].duration == "whole"
+    assert result.notes[0].stem_up is None  # 기둥 없음
+
+
+def test_half_note_classified_correctly():
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="half")])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "half"
+    assert n.n_flags == 0
+    assert n.stem_up is not None
+
+
+def test_quarter_note_classified_correctly():
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="quarter")])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "quarter"
+    assert n.n_flags == 0
+
+
+def test_eighth_note_classified_correctly():
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="eighth")])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "eighth"
+    assert n.n_flags == 1
+
+
+def test_sixteenth_note_classified_correctly():
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="sixteenth")])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "sixteenth"
+    assert n.n_flags == 2
+
+
+# ── 혼합 마디 테스트 ─────────────────────────────────────────────────
+
+def test_all_five_durations_in_one_measure():
+    """5종 음가가 섞인 마디에서 5개 모두 정확히 분류되어야 함 (5/5)."""
+    notes_spec = [
+        NoteSpec(x=200, staff_step=4, duration="quarter"),
+        NoteSpec(x=350, staff_step=6, duration="eighth"),
+        NoteSpec(x=500, staff_step=2, duration="half"),
+        NoteSpec(x=650, staff_step=4, duration="whole"),
+        NoteSpec(x=800, staff_step=8, duration="sixteenth"),
+    ]
+    result, gt, _ = _run(notes_spec)
+
+    assert len(result.notes) == 5, f"5개 음표 기대, 검출: {len(result.notes)}개"
+    correct = sum(n.duration == t["duration"] for n, t in zip(result.notes, gt))
+    assert correct == 5, (
+        f"5/5 기대, {correct}/5 정확 - "
+        + ", ".join(f"{n.duration}(정답:{t['duration']})" for n, t in zip(result.notes, gt)
+                    if n.duration != t["duration"])
+    )
+
+
+def test_notes_sorted_by_x_position():
+    """검출된 음표는 x좌표(악보 읽기 순서) 오름차순으로 정렬되어야 함."""
+    notes_spec = [
+        NoteSpec(x=500, staff_step=4, duration="quarter"),
+        NoteSpec(x=200, staff_step=4, duration="whole"),
+        NoteSpec(x=800, staff_step=4, duration="half"),
+    ]
+    result, _, _ = _run(notes_spec)
+    assert len(result.notes) == 3
+    xs = [n.head_x for n in result.notes]
+    assert xs == sorted(xs), f"x 정렬 실패: {xs}"
+
+
+def test_note_count_matches_spec():
+    """마디 내 음표 수가 명세한 수와 정확히 일치해야 함."""
+    for count in [1, 2, 3, 4]:
+        notes_spec = [
+            NoteSpec(x=200 + i * 200, staff_step=4, duration="quarter")
+            for i in range(count)
+        ]
+        result, _, _ = _run(notes_spec)
+        assert len(result.notes) == count, (
+            f"음표 {count}개 기대, 검출: {len(result.notes)}개"
+        )
+
+
+# ── 위치 변화 견고성 테스트 ──────────────────────────────────────────
+
+def test_note_at_various_staff_positions():
+    """오선의 다양한 높이(step 0~8)에 있는 음표도 동일한 음가로 분류되어야 함."""
+    for step in [0, 2, 4, 6, 8]:
+        result, gt, _ = _run([NoteSpec(x=200, staff_step=step, duration="quarter")])
+        assert len(result.notes) >= 1, f"staff_step={step}에서 음표 미검출"
+        assert result.notes[0].duration == "quarter", (
+            f"staff_step={step}에서 오분류: {result.notes[0].duration}"
+        )
+
+
+def test_stem_down_quarter_classified_correctly():
+    """기둥이 아래로 내려간 4분음표도 'quarter'로 분류되어야 함."""
+    result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="quarter", stem_up=False)])
+    assert len(result.notes) == 1
+    assert result.notes[0].duration == "quarter", (
+        f"stem_down quarter 오분류: {result.notes[0].duration}"
+    )
+
+
+if __name__ == "__main__":
+    tests = [
+        test_whole_note_classified_correctly,
+        test_half_note_classified_correctly,
+        test_quarter_note_classified_correctly,
+        test_eighth_note_classified_correctly,
+        test_sixteenth_note_classified_correctly,
+        test_all_five_durations_in_one_measure,
+        test_notes_sorted_by_x_position,
+        test_note_count_matches_spec,
+        test_note_at_various_staff_positions,
+        test_stem_down_quarter_classified_correctly,
+    ]
+    passed, failed = 0, 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS  {t.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"FAIL  {t.__name__}: {e}")
+            failed += 1
+    print(f"\n{passed}개 통과, {failed}개 실패")
+    import sys
+    sys.exit(1 if failed else 0)
