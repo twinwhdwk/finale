@@ -115,12 +115,20 @@ def _draw_note(img: np.ndarray, note: NoteSpec, head_y: int, spec: SyntheticScor
             cv2.line(img, (stem_x, head_y), (stem_x, stem_bot), 0, 2)
 
     # ── 깃발(flag): 기둥 끝에서 짧은 사선 ──
+    # 표준 음악 표기법:
+    #   stem_up  → 깃발이 기둥 오른쪽 아래 방향으로 뻗음 (fx1 = stem_x + 12)
+    #   stem_down → 깃발이 기둥 왼쪽 위 방향으로 뻗음  (fx1 = stem_x - 12)
     flag_end_y = stem_top if note.stem_up else stem_bot
     for f in range(n_flags):
         offset = f * 8
-        fy0 = flag_end_y + (offset if note.stem_up else -offset)
-        fy1 = fy0 + (14 if note.stem_up else -14)
-        fx1 = stem_x + 12
+        if note.stem_up:
+            fy0 = flag_end_y + offset
+            fy1 = fy0 + 14
+            fx1 = stem_x + 12
+        else:
+            fy0 = flag_end_y - offset
+            fy1 = fy0 - 14
+            fx1 = stem_x - 12
         cv2.line(img, (stem_x, fy0), (fx1, fy1), 0, 2)
 
     # ── 오선 밖 음표를 위한 덧줄(ledger line) ──

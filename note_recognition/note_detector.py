@@ -42,7 +42,6 @@ import numpy as np
 
 HEAD_FILL_THRESHOLD = 0.47   # 이 값 이상이면 채워진 머리 (quarter 이하)
 MIN_NOTE_AREA = 50            # 노이즈/아티팩트 제거용 최소 픽셀 수
-STEM_DIRECTION_RATIO = 1.5   # stem 길이가 반대 방향의 이 배 이상이면 해당 방향으로 확정
 # 표준 음악 표기 비율: notehead 높이(단축) ≈ staff_gap * 0.55~0.65.
 # (합성 이미지 실측: staff_gap=20, notehead_radius=11 → 11/20=0.55)
 _NOTEHEAD_RADIUS_RATIO = 0.55
@@ -214,9 +213,11 @@ def _count_flags(
     stem_pixels = [x + i for i, v in enumerate(row) if v > 0]
     if stem_pixels:
         stem_rightmost_x = max(stem_pixels)
+        stem_leftmost_x  = min(stem_pixels)
     else:
-        # 기둥을 못 찾으면 bbox 오른쪽 가장자리로 폴백
+        # 기둥을 못 찾으면 bbox 가장자리로 폴백
         stem_rightmost_x = x + w - 3
+        stem_leftmost_x  = x + 2
 
     # 깃발 y 범위
     if stem_up:
@@ -229,9 +230,15 @@ def _count_flags(
     if strip_y0 >= strip_y1:
         return 0
 
-    # 깃발 x 범위: 기둥 오른쪽 끝 바로 다음부터 ~15px
-    strip_x0 = max(0, stem_rightmost_x + 1)
-    strip_x1 = min(binary.shape[1], stem_rightmost_x + 18)
+    # 깃발 x 범위:
+    #   stem_up   → 깃발이 기둥 오른쪽 (표준 음악 표기법)
+    #   stem_down → 깃발이 기둥 왼쪽  (표준 음악 표기법)
+    if stem_up:
+        strip_x0 = max(0, stem_rightmost_x + 1)
+        strip_x1 = min(binary.shape[1], stem_rightmost_x + 18)
+    else:
+        strip_x0 = max(0, stem_leftmost_x - 18)
+        strip_x1 = max(0, stem_leftmost_x)  # 기둥 픽셀 바로 왼쪽까지
 
     if strip_x0 >= strip_x1:
         return 0

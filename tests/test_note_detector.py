@@ -139,9 +139,41 @@ def test_stem_down_quarter_classified_correctly():
     """기둥이 아래로 내려간 4분음표도 'quarter'로 분류되어야 함."""
     result, gt, _ = _run([NoteSpec(x=200, staff_step=4, duration="quarter", stem_up=False)])
     assert len(result.notes) == 1
-    assert result.notes[0].duration == "quarter", (
-        f"stem_down quarter 오분류: {result.notes[0].duration}"
-    )
+    assert result.notes[0].duration == "quarter"
+    assert result.notes[0].n_flags == 0
+
+
+def test_stem_down_eighth_classified_correctly():
+    """
+    기둥이 아래로 내려간 8분음표 분류.
+
+    회귀 방지: 합성 이미지가 stem_down 깃발을 기둥 오른쪽에 잘못 그리고 있었고
+    (표준은 왼쪽), _count_flags도 항상 오른쪽만 탐색했어서 stem_down 케이스가
+    우연히 통과하고 있었음. 두 버그를 동시에 수정해 이 테스트가 진짜로 왼쪽
+    깃발 탐색을 검증하도록 함.
+    """
+    result, gt, _ = _run([NoteSpec(x=300, staff_step=4, duration="eighth", stem_up=False)])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "eighth", f"stem_down eighth 오분류: {n.duration}"
+    assert n.n_flags == 1
+
+
+def test_stem_down_sixteenth_classified_correctly():
+    """기둥이 아래로 내려간 16분음표 - 깃발 2개 탐지 검증."""
+    result, gt, _ = _run([NoteSpec(x=300, staff_step=4, duration="sixteenth", stem_up=False)])
+    assert len(result.notes) == 1
+    n = result.notes[0]
+    assert n.duration == "sixteenth", f"stem_down sixteenth 오분류: {n.duration}"
+    assert n.n_flags == 2
+
+
+def test_stem_down_half_classified_correctly():
+    """기둥이 아래로 내려간 2분음표."""
+    result, gt, _ = _run([NoteSpec(x=300, staff_step=4, duration="half", stem_up=False)])
+    assert len(result.notes) == 1
+    assert result.notes[0].duration == "half"
+    assert result.notes[0].n_flags == 0
 
 
 if __name__ == "__main__":
@@ -156,6 +188,9 @@ if __name__ == "__main__":
         test_note_count_matches_spec,
         test_note_at_various_staff_positions,
         test_stem_down_quarter_classified_correctly,
+        test_stem_down_eighth_classified_correctly,
+        test_stem_down_sixteenth_classified_correctly,
+        test_stem_down_half_classified_correctly,
     ]
     passed, failed = 0, 0
     for t in tests:
