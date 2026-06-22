@@ -164,9 +164,16 @@ def _process_page(
         staff_gap=staff_gap_0,
     )
 
-    # ── MusicXML 저장 ──
+    # ── MusicXML 저장 (마디선 정보 연결) ──
+    # 첫 번째 오선의 barlines를 대표 마디선으로 사용.
+    # 여러 오선이 있으면 각 오선의 마디선 수가 같다고 가정 (표준 악보).
+    barlines = zones[0].barlines if zones else []
+    if barlines:
+        print(f"    마디선 {len(barlines)}개 감지 → {len(barlines)+1}마디")
+
     stem = Path(pdf_path).stem
     out_path = str(output_dir / f"{stem}_p{page_num + 1:03d}_opencv.musicxml")
-    save_musicxml(page_result, out_path, time_sig=time_sig, clef_type=clef_type)
+    save_musicxml(page_result, out_path, time_sig=time_sig,
+                  clef_type=clef_type, barlines=barlines if barlines else None)
     print(f"    저장: {out_path}")
     return out_path

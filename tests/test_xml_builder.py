@@ -192,15 +192,67 @@ def test_non_dotted_note_not_marked(tmp_path: Path):
     assert result.notes[0].is_dotted is False
 
 
-def test_dotted_quarter_saves_as_1_5_quarter_length(tmp_path: Path):
-    """점4분음표는 MusicXML에서 quarterLength=1.5로 저장되어야 함."""
-    result, _ = _detect([NoteSpec(x=300, staff_step=4, duration="quarter", dotted=True)])
-    out = str(tmp_path / "dotted.musicxml")
-    save_musicxml(result, out)
+def test_barline_based_measure_split(tmp_path: Path):
+    """
+    barlines 파라미터가 주어지면 박자 누산 대신 마디선 x좌표로 마디를 분리해야 함.
+
+    4분음표 6개, x=470에 마디선 → 마디1에 3개(x<470), 마디2에 3개(x>470).
+    """
+    notes_spec = [
+        NoteSpec(x=150, staff_step=4, duration="quarter"),
+        NoteSpec(x=270, staff_step=6, duration="quarter"),
+        NoteSpec(x=390, staff_step=2, duration="quarter"),
+        NoteSpec(x=550, staff_step=4, duration="quarter"),
+        NoteSpec(x=670, staff_step=0, duration="quarter"),
+        NoteSpec(x=790, staff_step=6, duration="quarter"),
+    ]
+    result, _ = _detect(notes_spec)
+    out = str(tmp_path / "barline.musicxml")
+    save_musicxml(result, out, barlines=[470])
+
     reloaded = converter.parse(out)
-    ns = list(reloaded.flatten().notes)
-    assert len(ns) == 1
-    assert ns[0].quarterLength == 1.5, f"점4분음표 quarterLength={ns[0].quarterLength} (기대:1.5)"
+    measures = [m for m in reloaded.parts[0].getElementsByClass("Measure")
+                if list(m.flatten().notes)]
+    assert len(measures) == 2, f"마디 수: {len(measures)} (기대: 2)"
+    m1_notes = list(measures[0].flatten().notes)
+    m2_notes = list(measures[1].flatten().notes)
+    assert len(m1_notes) == 3, f"마디1 음표 수: {len(m1_notes)} (기대: 3)"
+    assert len(m2_notes) == 3, f"마디2 음표 수: {len(m2_notes)} (기대: 3)"
+
+
+def test_rest_and_note_integrated_by_x_order(tmp_path: Path):
+    """
+    음표와 쉼표가 x좌표 기준으로 통합 정렬되어 MusicXML에 올바른 순서로 들어가야 함.
+    """
+    from synthetic_score import RestSpec
+    spec = SyntheticScoreSpec(
+        notes=[NoteSpec(x=200, staff_step=4, duration="quarter"),
+               NoteSpec(x=600, staff_step=4, duration="quarter")],
+        rests=[RestSpec(x=400, duration="whole")],
+    )
+    img, gt, rest_gt = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+
+    # 쉼표(x=400)가 음표(x=200)와 음표(x=600) 사이에 있어야 함
+    from note_recognition.xml_builder import _make_events
+    events = _make_events(result)
+    xs = [e.x for e in events]
+    assert xs == sorted(xs), f"x 순서 오류: {xs}"
+
+
+def test_key_signature_applied(tmp_path: Path):
+    """key_sig 파라미터가 Score에 반영되어야 함 (G장조=샵1개)."""
+    result, _ = _detect([NoteSpec(x=200, staff_step=4, duration="quarter")])
+    out = str(tmp_path / "keysig.musicxml")
+    save_musicxml(result, out, key_sig=1)  # G장조
+
+    reloaded = converter.parse(out)
+    key_sigs = list(reloaded.flatten().getElementsByClass("KeySignature"))
+    assert len(key_sigs) >= 1, "조표가 MusicXML에 없음"
+    assert key_sigs[0].sharps == 1, f"조표 샵 수: {key_sigs[0].sharps} (기대: 1)"
 
 
 if __name__ == "__main__":
