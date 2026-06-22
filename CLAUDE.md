@@ -62,8 +62,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      Middle C=C4, 7step=1옥타브, MIDI 오름차순, 픽셀 오차 스냅,
      합성이미지 왕복 테스트, end-to-end E4/B4/D5/C4 판정 확인).
      `pytest 56/56 통과`.
-  5. ⬜ **미착수**: 점음표(dotted) / 쉼표(rest) 처리,
-     최종 MusicXML 생성 (music21 stream으로 note 조립 → .musicxml 저장).
+  5. ✅ **MusicXML 생성** (`note_recognition/xml_builder.py`):
+     `notes_to_score()` - NoteDetectionResult + pitch 판정 → music21 Score.
+     박자 누산으로 4/4 마디 자동 분리. `save_musicxml()` - .musicxml 파일 저장.
+     `tests/test_xml_builder.py` 10개로 검증 (음표 수/음가/pitch 왕복,
+     마디 자동 분리, end-to-end E4/B4/D5/G4 파이프라인). `pytest 66/66 통과`.
+     알려진 한계: 임시표/쉼표/점음표/코드/이성부 미처리 (TODO 섹션 참고).
 
 ## Commands
 
