@@ -80,3 +80,73 @@ def apply_key_signature_to_pitches(
 ) -> list[Pitch]:
     """음높이 목록 전체에 조표를 적용한다."""
     return [apply_key_signature(p, key_sig) for p in pitches]
+
+
+class MeasureAccidentalState:
+    """
+    마디 내 임시표 상태 기계.
+
+    같은 마디 안에서 임시표(# 또는 b)가 붙은 음표가 나오면 해당 음이름의
+    상태를 기억해 그 마디가 끝날 때까지 유효하게 유지한다. 마디 경계에서
+    초기화한다.
+
+    ## 우선순위 (표준 음악 이론)
+
+    1. 이 마디에서 이미 등장한 임시표 (in-measure state) → 최우선
+    2. 조표(key signature)
+    3. 임시표/조표 없음 → 그대로
+
+    ## 사용법
+
+    ```python
+    state = MeasureAccidentalState(key_sig=2)  # D장조(F#, C#)
+
+    # 새 마디 시작할 때
+    state.reset()
+
+    # 각 음표를 처리할 때
+    pitch = state.apply(raw_pitch)
+    ```
+
+    ## 현재 한계
+
+    제자리표(natural, ♮) 미인식: 조표가 있는 음에 제자리표가 붙으면
+    해당 마디에서 조표가 무효화되어야 하는데, 현재 OpenCV 파이프라인은
+    제자리표 기호 자체를 인식하지 못하므로 처리할 수 없음 (TODO).
+    """
+
+    def __init__(self, key_sig: int = 0):
+        self._key_sig = key_sig
+        self._key_map: dict[str, str] = get_accidental_map(key_sig)
+        # 이 마디에서 이미 나온 임시표: {"C": "#", "B": "b", ...}
+        self._measure_state: dict[str, str] = {}
+
+    def reset(self) -> None:
+        """마디 경계: 마디 내 임시표 기억을 지운다. 조표는 유지."""
+        self._measure_state.clear()
+
+    def apply(self, pitch: Pitch) -> Pitch:
+        """
+        pitch에 우선순위에 따라 임시표/조표를 적용한 새 Pitch를 반환한다.
+        음표에 이미 임시표가 명시돼 있으면 그 값을 상태에 기록하고 그대로 사용.
+        """
+        note_name = pitch.step
+
+        if pitch.accidental:
+            # 이 음표 자체에 임시표가 명시돼 있음 → 상태 업데이트 후 그대로
+            self._measure_state[note_name] = pitch.accidental
+            return pitch
+
+        # 마디 내 앞선 임시표가 있으면 우선 적용
+        if note_name in self._measure_state:
+            acc = self._measure_state[note_name]
+            return Pitch(step=note_name, octave=pitch.octave,
+                         staff_step=pitch.staff_step, accidental=acc)
+
+        # 조표 적용
+        acc = self._key_map.get(note_name, "")
+        if acc:
+            return Pitch(step=note_name, octave=pitch.octave,
+                         staff_step=pitch.staff_step, accidental=acc)
+
+        return pitch

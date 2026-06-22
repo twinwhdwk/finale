@@ -67,8 +67,13 @@ def _event_to_music21(
     result: NoteDetectionResult,
     clef_type: str,
     key_sig: int = 0,
+    acc_state=None,   # MeasureAccidentalState | None
 ) -> note.GeneralNote:
-    """_Event → music21 Note 또는 Rest."""
+    """_Event → music21 Note 또는 Rest.
+
+    acc_state가 주어지면 마디 내 임시표 상태 기계를 통해 pitch를 보정한다.
+    None이면 기존 방식(key_sig만 적용)으로 fallback.
+    """
     from note_recognition.key_signature import apply_key_signature
     item = event.item
     if isinstance(item, DetectedNote):
@@ -78,7 +83,9 @@ def _event_to_music21(
         pitch = head_y_to_pitch(
             item.head_y, result.staff_top_y, result.staff_gap, clef=clef_type
         )
-        if key_sig:
+        if acc_state is not None:
+            pitch = acc_state.apply(pitch)
+        elif key_sig:
             pitch = apply_key_signature(pitch, key_sig)
         n = note.Note(pitch.name_with_octave)
         n.duration = duration.Duration(_DURATION_TYPE[item.duration])
@@ -190,6 +197,9 @@ def notes_to_score(
     else:
         measure_map = _assign_events_to_measures_by_beat(events, measure_length)
 
+    from note_recognition.key_signature import MeasureAccidentalState
+    acc_state = MeasureAccidentalState(key_sig=key_sig)
+
     s = stream.Score()
     p = stream.Part(id=part_name)
 
@@ -200,8 +210,11 @@ def notes_to_score(
             if key_sig != 0:
                 m.append(key.KeySignature(key_sig))
             m.append(ts)
+        # 마디 시작: 임시표 상태 초기화 (조표는 유지)
+        acc_state.reset()
         for ev in measure_map[m_num]:
-            m.append(_event_to_music21(ev, detection_result, clef_type, key_sig=key_sig))
+            m.append(_event_to_music21(ev, detection_result, clef_type,
+                                       acc_state=acc_state))
         p.append(m)
 
     s.append(p)
