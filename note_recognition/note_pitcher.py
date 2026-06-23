@@ -80,6 +80,15 @@ def head_y_to_staff_step(head_y: float, staff_top_y: int, staff_gap: int) -> int
 
     Returns:
         staff_step (0=맨 아래줄E4, 양수=위, 음수=아래)
+
+    ## 오차 허용범위
+
+    음이름이 틀리기 시작하는 임계값: |오차| ≥ staff_gap / 2 = 한 칸 이동.
+    안전 범위: |head_y 오차| < staff_gap / 2 - 1px.
+
+    예: staff_gap=20px → 한 칸 = 10px → ±4px 이내에서 정확.
+    합성 이미지 실측 오차: 최대 2px (여유 있음).
+    실제 PDF에서 staff_gap이 다르면 안전 범위도 비례해서 달라짐.
     """
     line4_y = staff_top_y + 4 * staff_gap
     raw = (line4_y - head_y) * 2 / staff_gap

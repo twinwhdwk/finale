@@ -10,6 +10,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import sys as _sys_pitcher
+_sys_pitcher.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+from synthetic_score import _staff_step_to_y  # noqa: E402
 from note_recognition.note_pitcher import (  # noqa: E402
     head_y_to_staff_step,
     staff_step_to_pitch,
@@ -226,3 +229,40 @@ if __name__ == "__main__":
     print(f"\n{passed}개 통과, {failed}개 실패")
     import sys as _sys
     _sys.exit(1 if failed else 0)
+
+
+def test_head_y_error_tolerance_within_safe_range():
+    """
+    head_y 오차가 ±4px 이내에서는 음이름이 정확해야 함.
+
+    실측: staff_gap=20일 때 짝수 step은 ±5px, 홀수 step은 ±4px까지 허용.
+    보수적으로 ±4px를 공통 안전 범위로 사용.
+    합성 이미지 실측 오차: 최대 2px (여유 충분).
+    """
+    staff_top, staff_gap = 150, 20
+    safe_margin = 4  # 짝수/홀수 step 공통 최소 안전 범위
+
+    for step in range(0, 9):
+        y_exact = _staff_step_to_y(step, staff_top, staff_gap)
+        for offset in range(-safe_margin, safe_margin + 1):
+            detected = head_y_to_staff_step(y_exact + offset, staff_top, staff_gap)
+            assert detected == step, (
+                f"staff_step={step} offset={offset}px: "
+                f"검출={detected} (±{safe_margin}px 안전 범위 내 오류)"
+            )
+
+
+def test_head_y_error_causes_wrong_pitch_at_boundary():
+    """
+    staff_gap/2 픽셀 오차에서 음이름이 틀려야 함 (경계값 테스트).
+    """
+    staff_top, staff_gap = 150, 20
+    half_gap = staff_gap // 2  # = 10px
+
+    # 정확히 half_gap 오차 → 인접 step으로 이동
+    y_step1 = _staff_step_to_y(1, staff_top, staff_gap)  # F4
+    detected = head_y_to_staff_step(y_step1 + half_gap, staff_top, staff_gap)
+    assert detected != 1, (
+        f"half_gap={half_gap}px 오차에서도 step=1이 유지됨 - "
+        "경계값 동작 이상"
+    )
