@@ -142,7 +142,13 @@ def _pdf_page_to_np(pdf_path: str, page_num: int = 0, dpi: int = 600) -> np.ndar
 # ── 오선 감지 ────────────────────────────────────────────────────────
 
 def _detect_staves(img_gray: np.ndarray) -> list[tuple[int, int]]:
-    """오선 감지 → [(top_y, bot_y), ...] 반환"""
+    """오선 감지 → [(top_y, bot_y), ...] 반환
+
+    병합 임계값 5px: 같은 오선 줄 내 두꺼운 픽셀(보통 2~3px)은 합치되
+    인접 오선 줄(간격 보통 15~80px)은 각각 독립 점으로 유지한다.
+    임계값이 20px이면 오선 5줄 전체가 하나의 점으로 묶여 시스템 간격을
+    staff_gap으로 오인하는 버그가 발생한다.
+    """
     h, w = img_gray.shape
     _, binary = cv2.threshold(img_gray, 180, 255, cv2.THRESH_BINARY_INV)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 6, 1))
@@ -151,9 +157,10 @@ def _detect_staves(img_gray: np.ndarray) -> list[tuple[int, int]]:
 
     if not len(rows):
         return []
+    # 같은 오선 줄 픽셀(2~3px 두께)만 합침 — 5px 이하 간격만 병합
     merged, cluster = [], [rows[0]]
     for r in rows[1:]:
-        if r - cluster[-1] <= 20:
+        if r - cluster[-1] <= 5:
             cluster.append(r)
         else:
             merged.append(int(np.mean(cluster)))
