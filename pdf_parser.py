@@ -477,8 +477,8 @@ def build_measure_location_map(
         - page_width는 페이지마다 다를 수 있으나(스캔 PDF는 보통 동일),
           이 함수는 단순화를 위해 모든 페이지에 같은 너비를 가정한다.
           페이지별 너비가 다르면 호출부에서 페이지별로 따로 호출할 것.
-        - bbox는 StaffZone.measure_bbox()를 그대로 사용하므로 다음
-          오선과 겹칠 수 있다 (TODO: next_top으로 클램프하는 보강).
+        - bbox y1은 다음 오선의 상단(next_top)으로 클램프되어 인접 오선
+          가사/코드 영역과 겹치지 않도록 보정된다.
 
     Args:
         pages:      parse_all_pages()의 반환값
@@ -491,14 +491,34 @@ def build_measure_location_map(
         {절대_마디_번호: MeasureLocation}
     """
     location_map: dict[int, MeasureLocation] = {}
+    abs_measure = 1
 
-    for abs_num, page, zone, m_in_staff in iter_absolute_measures(pages):
-        bbox = zone.measure_bbox(m_in_staff, page_width)
-        location_map[abs_num] = MeasureLocation(
-            measure_num=abs_num,
-            page_num=page.page_num,
-            staff_index=zone.index,
-            bbox=bbox,
-        )
+    for page in pages:
+        zones = page.zones
+        # 각 zone의 y1 상한: 다음 zone 상단에서 staff_h만큼 위(코드 영역 경계)
+        # 마지막 zone은 클램프 없음 (None)
+        next_top_limits = []
+        for i, zone in enumerate(zones):
+            if i + 1 < len(zones):
+                # 다음 오선의 top_y - 현재 오선 한 줄 높이 ≈ 코드 기호 영역 경계
+                limit = zones[i + 1].top_y - zone.staff_h
+            else:
+                limit = None
+            next_top_limits.append(limit)
+
+        for zone_idx, zone in enumerate(zones):
+            y1_limit = next_top_limits[zone_idx]
+            for m_in_staff in range(1, zone.measure_count + 1):
+                abs_num = abs_measure + m_in_staff - 1
+                x0, y0, x1, y1 = zone.measure_bbox(m_in_staff, page_width)
+                if y1_limit is not None:
+                    y1 = min(y1, y1_limit)  # 다음 오선과 겹치지 않도록 클램프
+                location_map[abs_num] = MeasureLocation(
+                    measure_num=abs_num,
+                    page_num=page.page_num,
+                    staff_index=zone.index,
+                    bbox=(x0, y0, x1, y1),
+                )
+            abs_measure += zone.measure_count
 
     return location_map

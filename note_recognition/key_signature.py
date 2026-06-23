@@ -21,7 +21,8 @@ key_sig 값:
 2. 조표(key signature): 임시표가 없으면 조표 적용.
 3. 제자리표(natural): 조표를 무효화하는 기호 (현재 미인식, TODO).
 
-현재 구현은 조표만 지원하고 임시표/제자리표는 미구현.
+현재 구현: 조표 + 마디 내 임시표 전파(MeasureAccidentalState)를 지원.
+제자리표(natural, ♮) 미지원.
 """
 
 from note_recognition.note_pitcher import Pitch

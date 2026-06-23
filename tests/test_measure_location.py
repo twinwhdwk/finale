@@ -196,6 +196,7 @@ if __name__ == "__main__":
         test_build_measure_location_map_single_page_single_staff,
         test_build_measure_location_map_multi_page_continues_numbering,
         test_build_measure_location_map_multi_staff_per_page,
+        test_build_measure_location_map_bbox_y1_clamped_by_next_staff,
         test_iter_zones_with_start_measure_matches_iter_absolute_measures,
         test_extract_pdf_data_style_chord_numbering_matches_location_map,
     ]
@@ -210,3 +211,32 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{passed}개 통과, {failed}개 실패")
     sys.exit(1 if failed else 0)
+
+
+def test_build_measure_location_map_bbox_y1_clamped_by_next_staff():
+    """
+    bbox y1이 다음 오선의 top_y - staff_h로 클램프되어야 함.
+    인접 오선의 가사/코드 영역과 겹치지 않도록 보정.
+    """
+    # zone1: top_y=100, bot_y=180, staff_h=80
+    # 클램프 없으면 y1 = 180 + int(80*2.5) = 380
+    # zone2: top_y=250 → 클램프 한계 = 250 - 80 = 170
+    zone1 = _make_zone(1, top_y=100, bot_y=180, barlines=[])
+    zone2 = _make_zone(2, top_y=250, bot_y=330, barlines=[])
+    page = PageParseResult(pdf_path="dummy.pdf", page_num=0, staff_count=2, zones=[zone1, zone2])
+
+    loc_map = build_measure_location_map([page], page_width=1000)
+
+    # zone1 마디의 y1은 클램프되어야 함
+    y1_zone1 = loc_map[1].bbox[3]
+    clamp_limit = zone2.top_y - zone1.staff_h  # 250 - 80 = 170
+    assert y1_zone1 <= clamp_limit, (
+        f"zone1 bbox y1={y1_zone1}이 next_top 클램프({clamp_limit})를 초과"
+    )
+
+    # zone2(마지막 오선)는 클램프 없음
+    y1_zone2 = loc_map[2].bbox[3]
+    expected_y1 = zone2.bot_y + int(zone2.staff_h * 2.5)
+    assert y1_zone2 == expected_y1, (
+        f"마지막 오선 bbox y1={y1_zone2}이 기대값({expected_y1})과 다름"
+    )
