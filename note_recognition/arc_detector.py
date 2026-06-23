@@ -65,9 +65,11 @@ def detect_arcs(
 
     edge_thr = max(int(staff_gap * 1.5), 50)
 
-    # 가사·코드 영역 제외: 오선 위아래 2.5칸 범위만 탐색
+    # 오선 위(코드 기호 영역)는 2.5칸, 아래(가사 위)는 3.5칸.
+    # 아래 여유를 더 주는 이유: 줄기가 위를 향한 음표의 붙임줄은
+    # 스태프 최하단 줄 아래 ~3칸 지점에 위치하는 경우가 많다.
     arc_y_min = max(0, staff_top_y - int(staff_gap * 2.5))
-    arc_y_max = min(h, staff_bot_y + int(staff_gap * 2.5))
+    arc_y_max = min(h, staff_bot_y + int(staff_gap * 3.5))
 
     # 수평 Opening 커널 폭: staff_gap 비례, 최소 30px.
     min_arc_w = max(int(staff_gap * 1.2), 30)
