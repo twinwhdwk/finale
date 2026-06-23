@@ -151,9 +151,9 @@ def _process_page(
     print(f"    {len(zones)}개 오선 시스템 감지")
 
     from pdf_parser import _detect_barlines
+    from note_recognition.xml_builder import notes_to_score
+    from music21 import stream as m21stream
 
-    # ── 오선별 음표 검출 ──
-    all_detected_notes = []
     first_top, first_bot = zones[0]
     staff_gap_0 = _staff_gap_from_zone(zones[0])
     line_thickness = detect_staff_line_thickness(
@@ -161,15 +161,18 @@ def _process_page(
     )
     print(f"    오선 두께={line_thickness}px, 간격≈{staff_gap_0}px")
 
-    all_detected_arcs = []
-    first_barlines: list[int] = []
+    # ── 오선별 독립 처리 (각 오선 = 악보의 연속 구간) ──
+    # 오선마다 바라인을 독립적으로 감지하고 notes_to_score로 마디를 생성한 뒤
+    # 마디 번호를 이어붙여 전체 페이지를 하나의 Part로 조립한다.
+    combined_part = m21stream.Part(id="Part 1")
+    measure_offset = 0
+    total_notes = 0
+    total_arcs = 0
+
     for zi, zone in enumerate(zones):
         top_y, bot_y = zone
         staff_gap = _staff_gap_from_zone(zone)
         zone_barlines = _detect_barlines(img_gray, top_y, bot_y)
-        if zi == 0:
-            first_barlines = zone_barlines
-        # x_start: 오선 왼쪽 헤더(음자리표/박자표/조표) 영역을 음표 검출에서 제외.
         if zone_barlines:
             x_start = max(0, zone_barlines[0] - staff_gap * 3)
         else:
@@ -182,34 +185,40 @@ def _process_page(
             line_thickness=line_thickness,
             x_start=x_start,
         )
-        all_detected_notes.extend(result.notes)
-        all_detected_arcs.extend(result.arcs)
+        if not result.notes:
+            continue
+        total_notes += len(result.notes)
+        total_arcs += len(result.arcs)
 
-    if not all_detected_notes:
+        # 이 오선의 마디 생성 (마디 번호는 1부터)
+        zone_score = notes_to_score(
+            result,
+            time_sig=time_sig,
+            clef_type=clef_type,
+            part_name="Part 1",
+            barlines=zone_barlines if zone_barlines else None,
+            key_sig=key_sig,
+        )
+        zone_part = zone_score.parts[0] if zone_score.parts else None
+        if zone_part is None:
+            continue
+
+        zone_measures = list(zone_part.getElementsByClass(m21stream.Measure))
+        for m in zone_measures:
+            m.number = m.number + measure_offset
+            combined_part.append(m)
+        measure_offset += len(zone_measures)
+
+    if total_notes == 0:
         raise RuntimeError(f"페이지 {page_num + 1}: 음표를 검출하지 못했습니다")
 
-    print(f"    {len(all_detected_notes)}개 음표 / {len(all_detected_arcs)}개 호(arc) 검출")
+    print(f"    {total_notes}개 음표 / {total_arcs}개 호(arc) / {measure_offset}마디")
 
-    # ── 전체 페이지 NoteDetectionResult 조립 ──
-    page_result = NoteDetectionResult(
-        notes=all_detected_notes,
-        arcs=all_detected_arcs,
-        staff_top_y=first_top,
-        staff_bot_y=first_bot,
-        line_thickness=line_thickness,
-        staff_gap=staff_gap_0,
-    )
-
-    # ── MusicXML 저장 (마디선 정보 연결) ──
-    # 첫 번째 오선의 barlines를 대표 마디선으로 사용.
-    barlines = first_barlines
-    if barlines:
-        print(f"    마디선 {len(barlines)}개 감지 → {len(barlines)+1}마디")
-
+    # ── MusicXML 저장 ──
+    final_score = m21stream.Score()
+    final_score.append(combined_part)
     stem = Path(pdf_path).stem
     out_path = str(output_dir / f"{stem}_p{page_num + 1:03d}_opencv.musicxml")
-    save_musicxml(page_result, out_path, time_sig=time_sig,
-                  clef_type=clef_type, barlines=barlines if barlines else None,
-                  key_sig=key_sig)
+    final_score.write("musicxml", fp=out_path)
     print(f"    저장: {out_path}")
     return out_path
