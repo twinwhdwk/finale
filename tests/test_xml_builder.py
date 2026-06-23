@@ -292,3 +292,85 @@ if __name__ == "__main__":
     print(f"\n{passed}개 통과, {failed}개 실패")
     import sys as _sys
     _sys.exit(1 if failed else 0)
+
+
+# ── barlines 기반 마디 분리 테스트 ──────────────────────────────────
+
+def test_barlines_split_notes_into_correct_measures(tmp_path: Path):
+    """
+    barlines 좌표를 넘기면 x좌표 기준으로 마디가 정확히 분리되어야 함.
+
+    x < 500 → 마디1, 500 ≤ x < 1000 → 마디2, x ≥ 1000 → 마디3
+    """
+    notes_spec = [
+        NoteSpec(x=200, staff_step=4, duration="quarter"),   # 마디1
+        NoteSpec(x=350, staff_step=4, duration="quarter"),   # 마디1
+        NoteSpec(x=600, staff_step=4, duration="quarter"),   # 마디2
+        NoteSpec(x=800, staff_step=4, duration="half"),      # 마디2
+        NoteSpec(x=1100, staff_step=4, duration="whole"),   # 마디3
+    ]
+    result, spec = _detect(notes_spec)
+    out = str(tmp_path / "barlines.musicxml")
+    save_musicxml(result, out, time_sig="4/4", barlines=[500, 1000])
+
+    reloaded = converter.parse(out)
+    measures = [m for m in reloaded.parts[0].getElementsByClass("Measure") if m.notes]
+    assert len(measures) == 3, f"마디 3개 기대, 실제 {len(measures)}개"
+    assert len(list(measures[0].notes)) == 2, "마디1에 음표 2개여야 함"
+    assert len(list(measures[1].notes)) == 2, "마디2에 음표 2개여야 함"
+    assert len(list(measures[2].notes)) == 1, "마디3에 음표 1개여야 함"
+
+
+def test_beat_fallback_without_barlines(tmp_path: Path):
+    """
+    barlines 없이 박자 누산 방식으로도 마디가 올바르게 분리되어야 함.
+    4분음표 8개 → 4/4박자 기준 2개 마디.
+    """
+    notes_spec = [
+        NoteSpec(x=100 + i * 150, staff_step=4, duration="quarter")
+        for i in range(8)
+    ]
+    result, spec = _detect(notes_spec)
+    out = str(tmp_path / "beat_fallback.musicxml")
+    save_musicxml(result, out, time_sig="4/4", barlines=None)
+
+    reloaded = converter.parse(out)
+    measures = [m for m in reloaded.parts[0].getElementsByClass("Measure") if m.notes]
+    assert len(measures) == 2, f"마디 2개 기대, 실제 {len(measures)}개"
+    for m in measures:
+        total_ql = sum(n.quarterLength for n in m.notes)
+        assert abs(total_ql - 4.0) < 0.01, f"마디 길이 4박 기대: {total_ql}"
+
+
+def test_barlines_vs_beat_consistency(tmp_path: Path):
+    """
+    마디선 좌표가 박자와 정확히 일치할 때 두 방식의 결과가 같아야 함.
+    """
+    notes_spec = [
+        NoteSpec(x=200, staff_step=4, duration="quarter"),
+        NoteSpec(x=350, staff_step=6, duration="quarter"),
+        NoteSpec(x=500, staff_step=2, duration="half"),      # 여기까지 마디1 = 4박
+        NoteSpec(x=750, staff_step=4, duration="whole"),    # 마디2 = 4박
+    ]
+    result, spec = _detect(notes_spec)
+
+    out_bar = str(tmp_path / "barlines.musicxml")
+    out_beat = str(tmp_path / "beat.musicxml")
+
+    # barlines 기반 (x=620 에서 마디 경계)
+    save_musicxml(result, out_bar, time_sig="4/4",
+                  barlines=[int(n.head_x) for n in result.notes
+                             if n.duration == "whole"])
+
+    # beat 기반
+    save_musicxml(result, out_beat, time_sig="4/4", barlines=None)
+
+    reloaded_bar = converter.parse(out_bar)
+    reloaded_beat = converter.parse(out_beat)
+
+    notes_bar = [n.nameWithOctave for n in reloaded_bar.flatten().notes]
+    notes_beat = [n.nameWithOctave for n in reloaded_beat.flatten().notes]
+
+    assert notes_bar == notes_beat, (
+        f"두 방식의 음이름 순서가 다름: barlines={notes_bar}, beat={notes_beat}"
+    )
