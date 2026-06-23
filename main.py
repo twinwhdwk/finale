@@ -33,6 +33,66 @@ from xml_comparator import compare
 from report_generator import print_console, save_html
 
 
+def _build_measure_map_and_save_images(
+    pdf_path: str,
+    report_dir: Path,
+    stem: str,
+    dpi: int = 150,
+) -> dict | None:
+    """
+    PDF 각 페이지를 이미지로 저장하고 마디 위치 매핑을 반환한다.
+
+    HTML 리포트의 '오류 클릭 → PDF 위치 하이라이트' 기능을 위한 준비 작업.
+    이미지는 report_dir/images/page_{n}.png 형태로 저장된다.
+    페이지 폭(px)은 build_measure_location_map()에 필요하므로 첫 페이지 렌더링
+    결과에서 직접 측정한다.
+
+    Args:
+        pdf_path:   원본 PDF 경로
+        report_dir: 리포트 저장 폴더 (images/ 하위 폴더가 여기에 생성됨)
+        stem:       파일 스템 (페이지 이미지 파일명에 쓰이지 않고 현재 로그용)
+        dpi:        페이지 이미지 렌더링 해상도.
+                    150dpi면 A4 기준 ≈1240×1754px. 파일 크기와 선명도의 균형.
+
+    Returns:
+        {절대마디번호: MeasureLocation} 또는 실패 시 None
+    """
+    try:
+        import fitz  # PyMuPDF
+        import cv2
+        import numpy as np
+        from pdf_parser import parse_all_pages, build_measure_location_map
+
+        img_dir = report_dir / "images"
+        img_dir.mkdir(exist_ok=True)
+
+        doc = fitz.open(pdf_path)
+        mat = fitz.Matrix(dpi / 72, dpi / 72)
+        page_width = None
+
+        print(f"  페이지 이미지 저장 중 ({len(doc)}페이지, {dpi}dpi)...")
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+            img_path = str(img_dir / f"page_{i + 1}.png")
+            pix.save(img_path)
+            if page_width is None:
+                page_width = pix.width
+        doc.close()
+
+        if page_width is None:
+            return None
+
+        print(f"  마디 위치 매핑 계산 중...")
+        pages = parse_all_pages(pdf_path, dpi=dpi)
+        loc_map = build_measure_location_map(pages, page_width)
+        print(f"  총 {len(loc_map)}개 마디 위치 매핑 완료")
+        return loc_map
+
+    except Exception as e:
+        print(f"  [경고] 마디 위치 매핑 실패 ({e}) — 하이라이트 기능 비활성화")
+        return None
+
+
 def _convert_and_resolve_single_xml(pdf_path: str, conv_dir: str, engine: str) -> str | None:
     """
     PDF를 지정 엔진으로 변환하고, xml_comparator.compare()가 바로 쓸 수 있는
@@ -222,7 +282,12 @@ def cmd_full(args):
 
     suffix = f"_{args.engine}" if args.engine != "audiveris" else ""
     html_path = args.html or str(report_dir / (Path(args.pdf).stem + suffix + "_report.html"))
-    save_html(result, html_path)
+
+    # 마디 위치 매핑 + 페이지 이미지 저장 (PDF 하이라이트 기능)
+    measure_location_map = _build_measure_map_and_save_images(
+        args.pdf, report_dir, stem=Path(args.pdf).stem
+    )
+    save_html(result, html_path, measure_location_map=measure_location_map)
 
 
 # ── convert (단일 PDF) ────────────────────────────────────────────────

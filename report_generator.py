@@ -88,7 +88,21 @@ def _track_chip(track: str) -> str:
     return f'<span class="chip" style="background:{c}">{lbl}</span>'
 
 
-def save_html(result: CompareResult, output_path: str) -> None:
+def save_html(
+    result: CompareResult,
+    output_path: str,
+    measure_location_map: dict | None = None,
+) -> None:
+    """HTML 리포트를 저장한다.
+
+    Args:
+        result:               xml_comparator.compare()의 반환값
+        output_path:          저장할 .html 경로
+        measure_location_map: pdf_parser.build_measure_location_map()의 결과.
+                              None이면 하이라이트 기능 비활성화.
+                              제공 시 각 오류 행에 data-page, data-bbox 속성을
+                              추가해 클릭 시 PDF 위치를 강조 표시한다.
+    """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     pdf_name  = Path(result.pdf_xml).name
     orig_name = Path(result.orig_xml).name
@@ -104,8 +118,20 @@ def save_html(result: CompareResult, output_path: str) -> None:
         sev   = meta[1]
         pos   = f"{d.measure}마디" if d.kind == "measure_miss" else f"{d.measure}마디 {d.offset:.2f}박"
 
+        # 하이라이트용 위치 데이터 속성
+        loc = measure_location_map.get(d.measure) if measure_location_map else None
+        loc_attrs = ""
+        if loc:
+            bx, by, bx1, by1 = loc.bbox
+            loc_attrs = (
+                f' data-page="{loc.page_num}"'
+                f' data-bbox="{bx},{by},{bx1},{by1}"'
+                ' title="클릭하면 PDF 위치를 확인할 수 있습니다"'
+                ' style="cursor:pointer"'
+            )
         row = (
-            f'<tr class="row" data-id="{i}" data-track="{track}" data-sev="{sev}" data-status="pending">'
+            f'<tr class="row" data-id="{i}" data-track="{track}" data-sev="{sev}"'
+            f' data-status="pending" data-measure="{d.measure}"{loc_attrs}>'
             f'<td class="col-pos">{pos}</td>'
             f'<td class="col-type">{_track_chip(track)} {_badge(d.kind)}</td>'
             f'<td class="col-msg">{d.message}</td>'
@@ -395,6 +421,65 @@ function applyFilters() {{
     if (show) visible++;
   }});
   document.getElementById('visible-count').textContent = visible;
+}}
+
+// ── PDF 위치 하이라이트 ──────────────────────────────────────────────
+// data-bbox 속성이 있는 행을 클릭하면 페이지 이미지 위에 박스를 그려준다.
+// 이미지는 서버 측에서 report_dir/images/page_{n}.png 로 저장돼 있어야 한다.
+document.querySelectorAll('.row[data-bbox]').forEach(function(row) {{
+  row.addEventListener('click', function(e) {{
+    if (e.target.classList.contains('btn-action')) return;
+    var page = row.getAttribute('data-page');
+    var bbox = row.getAttribute('data-bbox').split(',').map(Number);
+    showHighlight(page, bbox);
+  }});
+}});
+
+function showHighlight(page, bbox) {{
+  var overlay = document.getElementById('highlight-overlay');
+  if (!overlay) {{
+    overlay = document.createElement('div');
+    overlay.id = 'highlight-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
+      + 'background:rgba(0,0,0,0.7);display:flex;align-items:center;'
+      + 'justify-content:center;z-index:9999;cursor:pointer';
+    overlay.innerHTML = '<div style="position:relative;max-width:90vw;max-height:90vh">'
+      + '<canvas id="hl-canvas" style="max-width:90vw;max-height:90vh"></canvas>'
+      + '<div style="position:absolute;top:8px;right:8px;color:#fff;font-size:20px;'
+      + 'cursor:pointer;background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px"'
+      + ' onclick="document.getElementById('highlight-overlay').remove()">✕</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) {{
+      if (e.target === overlay) overlay.remove();
+    }});
+  }} else {{
+    overlay.style.display = 'flex';
+  }}
+
+  // 이미지 경로: 리포트와 같은 폴더의 images/page_{n+1}.png
+  var imgPath = 'images/page_' + (parseInt(page) + 1) + '.png';
+  var img = new Image();
+  img.onload = function() {{
+    var canvas = document.getElementById('hl-canvas');
+    canvas.width  = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    // 빨간 박스
+    ctx.strokeStyle = '#ff3333';
+    ctx.lineWidth = Math.max(3, img.naturalWidth / 300);
+    ctx.strokeRect(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]);
+    // 반투명 채우기
+    ctx.fillStyle = 'rgba(255,51,51,0.15)';
+    ctx.fillRect(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]);
+  }};
+  img.onerror = function() {{
+    alert('페이지 이미지를 불러올 수 없습니다: ' + imgPath
+      + '\n\n보고서 생성 시 --save-images 옵션을 사용해 이미지를 함께 저장하세요.');
+    document.getElementById('highlight-overlay').remove();
+  }};
+  img.src = imgPath;
 }}
 </script>
 </body>
