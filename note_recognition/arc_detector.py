@@ -69,7 +69,7 @@ def detect_arcs(
     arc_y_min = max(0, staff_top_y - int(staff_gap * 2.5))
     arc_y_max = min(h, staff_bot_y + int(staff_gap * 2.5))
 
-    # 수평으로 긴 구조만 남기는 Morphological Opening
+    # 수평 Opening 커널 폭: staff_gap 비례, 최소 30px.
     min_arc_w = max(int(staff_gap * 1.2), 30)
     hk = cv2.getStructuringElement(cv2.MORPH_RECT, (min_arc_w, 1))
     horiz = cv2.morphologyEx(binary, cv2.MORPH_OPEN, hk)
@@ -89,9 +89,8 @@ def detect_arcs(
         cut_left  = (x <= edge_thr)
         is_cut = cut_right or cut_left
 
-        # 너비 필터 (잘린 호는 절반만 보이므로 기준 완화)
-        min_w = staff_gap * 0.7 if is_cut else staff_gap * 1.4
-        if bw < min_w:
+        # 너비 필터: OPEN 커널과 동일 기준 (잘린 호는 절반 완화)
+        if bw < (min_arc_w // 2 if is_cut else min_arc_w):
             continue
 
         # 높이: 오선·빔보다 얇아야 함

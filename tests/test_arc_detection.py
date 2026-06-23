@@ -48,7 +48,7 @@ def _count_ref(mxl_path: Path) -> tuple[int, int]:
 
 # ── PDF arc 감지 ──────────────────────────────────────────────────────
 
-def _detect_arcs_from_pdf(pdf_path: Path, dpi: int = 200) -> dict:
+def _detect_arcs_from_pdf(pdf_path: Path, dpi: int = 300) -> dict:
     """
     PDF 전 페이지에서 arc를 감지하고 결과 요약을 반환.
 
