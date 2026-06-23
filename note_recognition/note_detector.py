@@ -34,9 +34,13 @@
 """
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    from note_recognition.arc_detector import ArcCandidate
 
 
 # ── 상수 (config.ini [opencv] 섹션으로 오버라이드 가능) ───────────────
@@ -88,6 +92,7 @@ class NoteDetectionResult:
     """한 오선 시스템에 대한 음표 검출 결과."""
     notes: list[DetectedNote] = field(default_factory=list)
     rests: list[DetectedRest] = field(default_factory=list)
+    arcs: list["ArcCandidate"] = field(default_factory=list)  # 붙임줄/이음줄 호 후보
     staff_top_y: int = 0
     staff_bot_y: int = 0
     line_thickness: int = 2
@@ -511,9 +516,17 @@ def detect_notes(
     notes.sort(key=lambda n: n.head_x)
     rests.sort(key=lambda r: r.center_x)
 
+    # 붙임줄/이음줄 호 감지 (오선 제거 후 binary에서 곡선 탐색)
+    from note_recognition.arc_detector import detect_arcs
+    arcs = detect_arcs(
+        binary_roi, staff_gap, staff_top_y, staff_bot_y,
+        img_width=binary_roi.shape[1],
+    )
+
     return NoteDetectionResult(
         notes=notes,
         rests=rests,
+        arcs=arcs,
         staff_top_y=staff_top_y,
         staff_bot_y=staff_bot_y,
         line_thickness=line_thickness,

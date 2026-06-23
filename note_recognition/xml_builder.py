@@ -28,7 +28,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Union
 
-from music21 import clef, duration, key, meter, note, stream
+from music21 import clef, duration, key, meter, note, stream, spanner
+from music21 import tie as m21tie
 
 from note_recognition.note_detector import DetectedNote, DetectedRest, NoteDetectionResult
 from note_recognition.note_pitcher import head_y_to_pitch
@@ -159,6 +160,71 @@ def _assign_events_to_measures_by_beat(
     return measures
 
 
+# ── 붙임줄/이음줄 적용 ───────────────────────────────────────────────
+
+def _apply_arcs(
+    ordered_notes: list[tuple[int, note.GeneralNote]],
+    arcs,  # list[ArcCandidate]
+    staff_gap: int,
+    part: stream.Part,
+) -> None:
+    """
+    감지된 호(ArcCandidate)를 music21 음표에 tie/slur로 적용한다.
+
+    Args:
+        ordered_notes: (head_x, music21_note) 리스트 (x순 정렬).
+        arcs:          detect_arcs() 결과.
+        staff_gap:     snap 거리 계산용 오선 간격.
+        part:          이음줄(slur) spanner를 추가할 파트.
+    """
+    if not arcs or not ordered_notes:
+        return
+
+    snap = staff_gap * 2.0
+
+    def _nearest(target_x: int) -> tuple[int, note.GeneralNote] | None:
+        best = min(ordered_notes, key=lambda p: abs(p[0] - target_x))
+        return best if abs(best[0] - target_x) <= snap else None
+
+    for arc in arcs:
+        # 시스템 경계에서 잘린 호: 한쪽 끝만 처리
+        if arc.cut_right:
+            left = _nearest(arc.x0)
+            if left and isinstance(left[1], note.Note):
+                n = left[1]
+                if n.tie is None:
+                    n.tie = m21tie.Tie("start")
+            continue
+
+        if arc.cut_left:
+            right = _nearest(arc.x1)
+            if right and isinstance(right[1], note.Note):
+                n = right[1]
+                if n.tie is None:
+                    n.tie = m21tie.Tie("stop")
+            continue
+
+        left  = _nearest(arc.x0)
+        right = _nearest(arc.x1)
+        if left is None or right is None or left is right:
+            continue
+
+        n1, n2 = left[1], right[1]
+        if not (isinstance(n1, note.Note) and isinstance(n2, note.Note)):
+            continue
+
+        if n1.nameWithOctave == n2.nameWithOctave:
+            # 붙임줄 (tie): 같은 음높이
+            if n1.tie is None:
+                n1.tie = m21tie.Tie("start")
+            if n2.tie is None:
+                n2.tie = m21tie.Tie("stop")
+        else:
+            # 이음줄 (slur): 다른 음높이
+            sl = spanner.Slur(n1, n2)
+            part.append(sl)
+
+
 # ── 공개 API ──────────────────────────────────────────────────────────
 
 def notes_to_score(
@@ -206,6 +272,9 @@ def notes_to_score(
     s = stream.Score()
     p = stream.Part(id=part_name)
 
+    # (head_x, music21_note) 순서 목록 — tie/slur 매칭용
+    ordered_notes: list[tuple[int, note.GeneralNote]] = []
+
     for m_num in sorted(measure_map.keys()):
         m = stream.Measure(number=m_num)
         if m_num == 1:
@@ -213,12 +282,18 @@ def notes_to_score(
             if key_sig != 0:
                 m.append(key.KeySignature(key_sig))
             m.append(ts)
-        # 마디 시작: 임시표 상태 초기화 (조표는 유지)
         acc_state.reset()
         for ev in measure_map[m_num]:
-            m.append(_event_to_music21(ev, detection_result, clef_type,
-                                       acc_state=acc_state))
+            m21_note = _event_to_music21(ev, detection_result, clef_type,
+                                         acc_state=acc_state)
+            m.append(m21_note)
+            ordered_notes.append((ev.x, m21_note))
         p.append(m)
+
+    # 붙임줄(tie) / 이음줄(slur) 적용
+    if detection_result.arcs:
+        _apply_arcs(ordered_notes, detection_result.arcs,
+                    detection_result.staff_gap, p)
 
     s.append(p)
     return s
