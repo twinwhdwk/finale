@@ -516,11 +516,24 @@ def detect_notes(
     notes.sort(key=lambda n: n.head_x)
     rests.sort(key=lambda r: r.center_x)
 
-    # 붙임줄/이음줄 호 감지 (오선 제거 후 binary에서 곡선 탐색)
+    # 붙임줄/이음줄 호 감지.
+    # 음표 감지용 x_start(바라인 기반)는 첫 마디 전체를 마스킹할 수 있으므로
+    # 아크 감지는 clef/key/time sig 영역만 제외하는 작은 값을 사용.
+    # 대신, 첫 마디 영역(x < x_start)에서 오선 아래 가사 위치에 있는 구조는
+    # 가사 곡선으로 간주하여 제거한다.
     from note_recognition.arc_detector import detect_arcs
+    binary_for_arcs = binary.copy()
+    binary_for_arcs[:roi_top, :] = 0
+    binary_for_arcs[roi_bot:, :] = 0
+    img_w = img_gray.shape[1]
+    # img_w의 1/8 ≈ 325px: treble clef + 조표 + 박자표 전체 영역을 커버하면서
+    # 첫 마디 아크 감지는 허용. min(x_start, cap)으로 x_start가 너무 큰 경우 보정.
+    x_arc_start = min(x_start, max(80, img_w // 8))
+    if x_arc_start > 0:
+        binary_for_arcs[:, :x_arc_start] = 0
     arcs = detect_arcs(
-        binary_roi, staff_gap, staff_top_y, staff_bot_y,
-        img_width=binary_roi.shape[1],
+        binary_for_arcs, staff_gap, staff_top_y, staff_bot_y,
+        img_width=binary_for_arcs.shape[1],
     )
 
     return NoteDetectionResult(
