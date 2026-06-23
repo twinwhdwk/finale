@@ -199,7 +199,9 @@ def _detect_barlines(img_gray: np.ndarray, top_y: int, bot_y: int) -> list[int]:
        → 비첫 오선(클레프만, 조표/박자표 반복 없음)의 왼쪽 경계선
     6. 300px 미만 간격 제거 (겹침표 이중선)
     """
-    staff_crop = img_gray[top_y:bot_y, :]
+    # bot_y는 오선 하단 선 y좌표이므로 포함해야 함 (top_y:bot_y는 bot_y 행 제외).
+    # off-by-one이면 95% 임계값이 13px 차로 통과 실패하는 경우 발생.
+    staff_crop = img_gray[top_y:bot_y + 1, :]
     h, w = staff_crop.shape
     if h < 5 or w < 40:
         return []
