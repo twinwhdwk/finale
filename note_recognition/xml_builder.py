@@ -19,7 +19,8 @@ note_pitcher.py의 pitch 판정을 결합해 music21 Score를 구성하고
   '임시표 없음'과 구분 불가 — OpenCV 파이프라인에서 제자리표 기호 미인식)
 - 코드(chord): 화음은 개별 음표로 처리
 - 2성부: 이성부 악보는 하나의 Part로 합쳐짐
-- 4분/8분쉼표: note_detector._classify_rest가 선형 쉼표 미지원
+- 4분/8분쉼표: note_detector._classify_rest가 선형 쉼표 탐지 지원.
+  단 합성 이미지에서 8분쉼표가 4분쉼표로 오분류될 수 있음 (실측 후 조정 필요)
 """
 
 import math
