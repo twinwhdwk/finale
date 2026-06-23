@@ -425,7 +425,7 @@ function applyFilters() {{
 
 // ── PDF 위치 하이라이트 ──────────────────────────────────────────────
 // data-bbox 속성이 있는 행을 클릭하면 페이지 이미지 위에 박스를 그려준다.
-// 이미지는 서버 측에서 report_dir/images/page_{n}.png 로 저장돼 있어야 한다.
+// 이미지는 서버 측에서 report_dir/images/page_{{n}}.png 로 저장돼 있어야 한다.
 document.querySelectorAll('.row[data-bbox]').forEach(function(row) {{
   row.addEventListener('click', function(e) {{
     if (e.target.classList.contains('btn-action')) return;
@@ -457,7 +457,7 @@ function showHighlight(page, bbox) {{
     overlay.style.display = 'flex';
   }}
 
-  // 이미지 경로: 리포트와 같은 폴더의 images/page_{n+1}.png
+  // 이미지 경로: 리포트와 같은 폴더의 images/page_{{n+1}}.png
   var imgPath = 'images/page_' + (parseInt(page) + 1) + '.png';
   var img = new Image();
   img.onload = function() {{

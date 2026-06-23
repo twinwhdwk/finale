@@ -32,7 +32,9 @@ from note_recognition.note_detector import (
     detect_notes,
 )
 from note_recognition.note_pitcher import Pitch, head_y_to_pitch, staff_step_to_pitch
-from note_recognition.key_signature import apply_key_signature, get_accidental_map
+from note_recognition.key_signature import (
+    apply_key_signature, get_accidental_map, MeasureAccidentalState,
+)
 from note_recognition.xml_builder import notes_to_score, save_musicxml
 from note_recognition.staff_removal import (
     detect_staff_line_thickness,
@@ -42,7 +44,7 @@ from note_recognition.staff_removal import (
 __all__ = [
     "DetectedNote", "DetectedRest", "NoteDetectionResult", "detect_notes",
     "Pitch", "head_y_to_pitch", "staff_step_to_pitch",
-    "apply_key_signature", "get_accidental_map",
+    "apply_key_signature", "get_accidental_map", "MeasureAccidentalState",
     "notes_to_score", "save_musicxml",
     "detect_staff_line_thickness", "remove_staff_lines",
 ]
