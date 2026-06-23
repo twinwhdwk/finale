@@ -198,3 +198,55 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{passed}개 통과, {failed}개 실패")
     sys.exit(1 if failed else 0)
+
+
+def test_thickness_detection_various_gap_sizes():
+    """
+    다양한 staff_gap에서도 오선 두께가 정확히 측정되어야 함.
+    cv2.line(thickness=2)는 실제 3px로 렌더링됨 (모든 gap에서 동일).
+    """
+    for gap in [15, 20, 25]:
+        spec = SyntheticScoreSpec(notes=[], staff_gap=gap)
+        img, _, _ = render_synthetic_staff(spec)
+        top_y, bot_y = spec.staff_top, spec.staff_top + 4 * gap
+
+        detected = detect_staff_line_thickness(img, [(top_y, bot_y)])
+        # cv2.line(thickness=2) → 실제 3px 렌더링 (Bresenham 특성)
+        assert detected == ACTUAL_RENDERED_THICKNESS, (
+            f"staff_gap={gap}: 두께 {ACTUAL_RENDERED_THICKNESS} 기대, {detected} 검출"
+        )
+
+
+def test_staff_removal_preserves_notes_at_various_gaps():
+    """
+    staff_gap이 다를 때도 오선 제거 후 5종 음가가 모두 생존해야 함.
+    """
+    for gap in [18, 22, 25]:
+        spec = SyntheticScoreSpec(
+            notes=[
+                NoteSpec(x=200, staff_step=4, duration="quarter"),
+                NoteSpec(x=350, staff_step=4, duration="eighth"),
+                NoteSpec(x=500, staff_step=2, duration="half"),
+                NoteSpec(x=650, staff_step=4, duration="whole"),
+                NoteSpec(x=800, staff_step=6, duration="sixteenth"),
+            ],
+            staff_gap=gap,
+            notehead_radius=int(gap * 0.55),
+        )
+        img, gt, _ = render_synthetic_staff(spec)
+        top_y, bot_y = spec.staff_top, spec.staff_top + 4 * gap
+
+        removed = remove_staff_lines(
+            img, top_y, bot_y,
+            line_thickness=ACTUAL_RENDERED_THICKNESS,
+            min_horizontal_run=max(20, gap * 2),
+        )
+        _, after = cv2.threshold(removed, 128, 255, cv2.THRESH_BINARY_INV)
+
+        for note_gt in gt:
+            r = int(gap * 0.55) + 3
+            head_x, head_y = note_gt["x"], note_gt["head_y"]
+            region = after[head_y - r:head_y + r, head_x - r:head_x + r]
+            assert region.sum() > 0, (
+                f"staff_gap={gap}: {note_gt['duration']} 음표(x={head_x})가 완전히 사라짐"
+            )

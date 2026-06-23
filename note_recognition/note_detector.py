@@ -28,7 +28,7 @@
 ## 알려진 한계 (현재 버전)
 - 빔(beam, 여러 음표를 잇는 가로 선)으로 묶인 케이스: beam_splitter.py로 처리 (2~3개 묶음 검증 완료)
 - 점음표(.dotted): _detect_dot()으로 지원 (is_dotted 필드)
-- 쉼표: 전/2분쉼표(블록형) 지원. 4분/8분쉼표(선형)는 온음표와 특성이 겹쳐 미지원 (TODO)
+- 쉼표: 전/2분쉼표(블록형) + 4분/8분쉼표(선형) 지원.
 - 음높이(pitch) 판정: note_pitcher.py에서 처리 (이 모듈의 담당 아님)
 - 코드(chord), 이성부 분리 미구현
 """
@@ -124,6 +124,7 @@ def _classify_rest(
     if h == 0 or w == 0:
         return None
     aspect = w / h
+    area = w * h   # bbox 면적 (실제 픽셀 수 근사)
     cx, cy = x + w // 2, y + h // 2
     line4_y = staff_top_y + 4 * staff_gap
     line3_y = staff_top_y + 3 * staff_gap
@@ -141,9 +142,21 @@ def _classify_rest(
             return DetectedRest(bbox=bbox, center_x=cx, center_y=cy,
                                 duration="half", aspect=aspect)
 
-    # 4분/8분쉼표는 온음표와 특성이 겹쳐 false positive가 많음.
-    # 현재 버전에서는 블록형(전/2분)만 탐지하고 선형 쉼표는 미지원.
-    # TODO: 4분쉼표(지그재그)와 8분쉼표(사선+점)의 정밀 분류기 추가.
+    # 4분/8분쉼표: 세로로 길고 좁은 선형 기호
+    # 핵심 조건: h < staff_gap*2 (기둥 있는 음표는 h > staff_gap*3) AND aspect < 1.0
+    # 온음표는 aspect > 1.0이라 자동 제외. 기둥 음표는 h > 60 (staff_gap=20 기준)이라 제외.
+    # 오선 중간 영역에 위치해야 함 (악보 헤더/장식 제외).
+    if (h < staff_gap * 2.0 and aspect < 1.0 and
+            area > 50 and area < staff_gap * staff_gap):
+        mid_staff_y = staff_top_y + 2 * staff_gap
+        if abs(cy - mid_staff_y) < staff_gap * 2.0:
+            # 8분쉼표는 4분쉼표보다 더 작고 단순 (area 기준)
+            if area < staff_gap * staff_gap * 0.5:
+                return DetectedRest(bbox=bbox, center_x=cx, center_y=cy,
+                                    duration="eighth", aspect=aspect)
+            else:
+                return DetectedRest(bbox=bbox, center_x=cx, center_y=cy,
+                                    duration="quarter", aspect=aspect)
 
     return None
 
