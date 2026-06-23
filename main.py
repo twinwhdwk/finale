@@ -380,9 +380,12 @@ def cmd_run(args):
                          pdf_chords=pdf_chords, pdf_lyrics=pdf_lyrics)
         print_console(result)
 
-        # 4. HTML 리포트 저장
+        # 4. HTML 리포트 저장 (마디 위치 매핑 포함)
         html_path = report_dir / f"{stem}_report.html"
-        save_html(result, str(html_path))
+        measure_location_map = _build_measure_map_and_save_images(
+            str(pdf), report_dir, stem=stem
+        )
+        save_html(result, str(html_path), measure_location_map=measure_location_map)
 
 
 # ── compare ──────────────────────────────────────────────────────────
@@ -406,7 +409,12 @@ def cmd_compare(args):
     print_console(result)
 
     html_path = args.html or str(report_dir / (Path(args.pdf).stem + "_report.html"))
-    save_html(result, html_path)
+    loc_map = None
+    if pdf_source:
+        loc_map = _build_measure_map_and_save_images(
+            pdf_source, report_dir, stem=Path(args.pdf).stem
+        )
+    save_html(result, html_path, measure_location_map=loc_map)
 
 
 # ── full (단일 PDF 변환 + 비교) ───────────────────────────────────────
@@ -696,7 +704,10 @@ def cmd_compare_engines(args):
         results[engine] = result
 
         html_path = report_dir / f"{Path(args.pdf).stem}_{engine}_report.html"
-        save_html(result, str(html_path))
+        loc_map = _build_measure_map_and_save_images(
+            args.pdf, report_dir, stem=Path(args.pdf).stem
+        )
+        save_html(result, str(html_path), measure_location_map=loc_map)
 
     # ── 비교 요약 ──
     print(f"\n{'='*72}\n[엔진 비교 요약]\n{'='*72}")
