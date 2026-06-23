@@ -69,15 +69,18 @@ def get_homr_gpu() -> str:
 def get_opencv_params() -> dict:
     """
     자체 OpenCV 파이프라인 파라미터를 config.ini [opencv] 섹션에서 읽는다.
-    없으면 note_detector.py의 기본값(합성 이미지 기준)을 사용.
+    없으면 기본값(합성 이미지 기준)을 사용.
 
     실제 교과서 PDF 실측 후 config.ini를 수정하면 코드 변경 없이 튜닝 가능.
     """
     cfg = load()
     return {
-        "head_fill_threshold":  cfg.getfloat("opencv", "head_fill_threshold",  fallback=0.47),
+        "head_fill_threshold":   cfg.getfloat("opencv", "head_fill_threshold",   fallback=0.47),
         "notehead_radius_ratio": cfg.getfloat("opencv", "notehead_radius_ratio", fallback=0.55),
         "has_stem_height_ratio": cfg.getfloat("opencv", "has_stem_height_ratio", fallback=2.5),
+        "key_sig":               cfg.getint(  "opencv", "key_sig",               fallback=0),
+        "time_sig":              cfg.get(     "opencv", "time_sig",               fallback="4/4"),
+        "clef_type":             cfg.get(     "opencv", "clef_type",              fallback="treble"),
     }
 
 
@@ -105,5 +108,7 @@ def print_config() -> None:
     print(f"  opencv:         head_fill={ocv['head_fill_threshold']}  "
           f"radius_ratio={ocv['notehead_radius_ratio']}  "
           f"stem_ratio={ocv['has_stem_height_ratio']}")
+    print(f"  opencv 악보:    key_sig={ocv['key_sig']}  "
+          f"time_sig={ocv['time_sig']}  clef={ocv['clef_type']}")
     print(f"  파트 인덱스:    {get_part_index()}")
     print("=" * 50)

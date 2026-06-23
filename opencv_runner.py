@@ -42,8 +42,9 @@ def convert_pdf_to_xml(
     pdf_path: str,
     output_dir: str,
     dpi: int = 300,
-    time_sig: str = "4/4",
-    clef_type: str = "treble",
+    time_sig: str | None = None,
+    clef_type: str | None = None,
+    key_sig: int | None = None,
 ) -> list[str]:
     """
     PDF → OpenCV 파이프라인 → .musicxml 변환.
@@ -54,12 +55,27 @@ def convert_pdf_to_xml(
         pdf_path:   원본 PDF 경로
         output_dir: 결과 .musicxml 저장 폴더
         dpi:        PDF 렌더링 해상도 (기본 300 - 합성 이미지 기준, 실측 후 조정 필요)
-        time_sig:   박자표 (자동 감지 미구현 - 수동 지정 필요)
-        clef_type:  음자리표 ("treble" | "bass", 자동 감지 미구현)
+        time_sig:   박자표. None이면 config.ini [opencv] time_sig 사용 (기본 "4/4").
+        clef_type:  음자리표. None이면 config.ini [opencv] clef_type 사용 (기본 "treble").
+        key_sig:    조표 (샵 개수: 양수, 플랫: 음수, C장조: 0).
+                    None이면 config.ini [opencv] key_sig 사용 (기본 0).
 
     Returns:
         생성된 .musicxml 파일 경로 목록 (페이지당 1개)
     """
+    try:
+        from config_loader import get_opencv_params
+        params = get_opencv_params()
+        if time_sig is None:
+            time_sig = params["time_sig"]
+        if clef_type is None:
+            clef_type = params["clef_type"]
+        if key_sig is None:
+            key_sig = params["key_sig"]
+    except ImportError:
+        time_sig  = time_sig  or "4/4"
+        clef_type = clef_type or "treble"
+        key_sig   = key_sig   if key_sig is not None else 0
     import fitz
     from pdf_parser import _pdf_page_to_np, _detect_staves
     from note_recognition.staff_removal import (
@@ -93,6 +109,7 @@ def convert_pdf_to_xml(
                 dpi=dpi,
                 time_sig=time_sig,
                 clef_type=clef_type,
+                key_sig=key_sig,
             )
             result_paths.append(xml_path)
         except Exception as e:
@@ -109,6 +126,7 @@ def _process_page(
     dpi: int,
     time_sig: str,
     clef_type: str,
+    key_sig: int = 0,
 ) -> str:
     """단일 페이지를 처리해 .musicxml로 저장하고 경로를 반환한다."""
     from pdf_parser import _pdf_page_to_np, _detect_staves
@@ -182,6 +200,7 @@ def _process_page(
     stem = Path(pdf_path).stem
     out_path = str(output_dir / f"{stem}_p{page_num + 1:03d}_opencv.musicxml")
     save_musicxml(page_result, out_path, time_sig=time_sig,
-                  clef_type=clef_type, barlines=barlines if barlines else None)
+                  clef_type=clef_type, barlines=barlines if barlines else None,
+                  key_sig=key_sig)
     print(f"    저장: {out_path}")
     return out_path
