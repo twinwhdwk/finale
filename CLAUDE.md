@@ -27,81 +27,108 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`main.py full`, `python main.py run`)에서는 Audiveris만 사용.
 - **현재 핵심 방향: `note_recognition/` 패키지 — Audiveris를 쓰지 않는 자체 OpenCV
   음표 인식기.** 위 "입력 데이터 특성"(디지털 PDF, 2성부 이하, 중고등학생 수준)을
-  적극 활용해, 범용 OMR이 아닌 좁은 도메인 특화 인식기를 새로 구축 중. 목표 음가:
-  온음표/2분음표/4분음표/8분음표/16분음표(+ 부속 점음표·쉼표는 추후).
+  적극 활용해, 범용 OMR이 아닌 좁은 도메인 특화 인식기를 새로 구축 중.
 
-  **진행 상황** (단계별로 `tests/test_*.py`에서 검증):
+  **진행 상황** — 파이프라인 완성, `pytest 134/134` 통과:
+
   1. ✅ **합성 테스트 이미지 생성기** (`tests/fixtures/synthetic_score.py`):
-     실제 PDF 없이도 ground truth가 100% 확실한 검증용 악보 이미지를 직접
-     렌더링. 표준 음표 모양(채워진/빈 머리, 기둥, 깃발, 덧줄)을 OpenCV로
-     그려 5종 음가(whole/half/quarter/eighth/sixteenth) 전부 생성 가능.
+     `NoteSpec(x, staff_step, duration, stem_up, beam_to_next, dotted)` +
+     `RestSpec(x, duration)` + `SyntheticScoreSpec`. 5종 음가·점음표·
+     전/2분/4분/8분쉼표·빔 연결 렌더링. `render_synthetic_staff()` →
+     `(img, note_gt, rest_gt)` 3-tuple 반환.
+
   2. ✅ **오선 제거** (`note_recognition/staff_removal.py`):
-     `detect_staff_line_thickness()` - 오선 한 줄의 실제 두께를 run-length
-     최빈값으로 측정 (버그 이력: run 시작점이 아닌 모든 y에서 재측정해
-     최빈값이 항상 실제보다 작게 나오던 버그 발견·수정함, 두께 3을 1로
-     오판했었음).
-     `remove_staff_lines()` - 2단계 검증(가로 연속성 → 세로 run-length)으로
-     오선만 정밀 제거. 1차 구현(세로 run-length만 사용)은 빈 음표머리(2분/
-     온음표)의 타원 테두리가 오선과 두께가 비슷해 통째로 지워지는 회귀가
-     실험으로 발견되어, 가로 연속성 기준을 추가해 해결. `tests/test_staff_removal.py`
-     6개로 검증 (빈 영역 100% 제거, 채워진 머리 보존율 ≥70%, 빈 머리가
-     오선으로 오인되지 않음, 5종 음가 전부 생존 확인).
-  3. ✅ **음표 객체 분리 및 음가 분류** (`note_recognition/note_detector.py`):
-     연결성분 → 기둥 유무/머리 밀도/깃발 개수로 5종 음가 분류.
-     `note_recognition/beam_splitter.py` 신규: 빔으로 묶인 컴포넌트를
-     세로 투영 피크 기반으로 개별 음표로 분할. 3개 묶음까지 검증.
-     `tests/test_note_detector.py` 17개로 검증 (stem_up/down 전 음가,
-     빔 그룹 2/3개, 혼합 마디). `pytest 43/43 통과`.
-  4. ✅ **음높이 판정** (`note_recognition/note_pitcher.py`):
-     `head_y_to_staff_step()` - head_y 픽셀 → staff_step 역산
-     (`round((line4_y - head_y) * 2 / staff_gap)`).
-     `staff_step_to_pitch()` - 높은/낮은음자리표별 온음계 매핑.
-     `Pitch` 데이터클래스 - step/octave/accidental + music21 호환
-     `name_with_octave`(예: "C4") + MIDI 번호 변환.
-     `tests/test_note_pitcher.py` 13개로 검증 (landmarks E4~F5,
-     Middle C=C4, 7step=1옥타브, MIDI 오름차순, 픽셀 오차 스냅,
-     합성이미지 왕복 테스트, end-to-end E4/B4/D5/C4 판정 확인).
-     `pytest 56/56 통과`.
-  5. ✅ **MusicXML 생성** (`note_recognition/xml_builder.py`):
-     ✅ **바라인 기반 마디 분리**: `barlines: list[int]` 파라미터로
-     StaffZone.barlines를 직접 받아 head_x 비교로 마디 배정.
-     barlines 없으면 박자 누산 fallback. 음표/쉼표 x좌표 기준 통합 정렬.
-     `_assign_events_to_measures_by_barlines()` / `_by_beat()` 두 전략.
-     ✅ **조표(key signature)**: `key_sig` 파라미터로 음이름에 accidental 반영.
-     `key_signature.py` 신규: `get_accidental_map()` (Circle of Fifths 샵/플랫),
-     `apply_key_signature()` (임시표 우선). `tests/test_key_signature.py` 14개.
-     ✅ **점음표(dotted)**: is_dotted=True이면 quarterLength×1.5 + dots=1.
-     ✅ **전/2분쉼표(rest)**: DetectedRest → music21 note.Rest() 변환.
-     `pytest 89/89 통과`.
-  6. ✅ **opencv 엔진 main.py 연동** (`opencv_runner.py`):
-     barlines, x_start 모두 연결. `compare-engines` 3개 엔진 비교.
-  7. ✅ **패키지 공개 API** (`note_recognition/__init__.py`):
-     `from note_recognition import detect_notes, save_musicxml` 한 줄로 사용 가능.
-     헤더 영역 마스킹: `detect_notes(..., x_start=N)`으로 음자리표/박자표 영역 제외.
+     `detect_staff_line_thickness()` — run 시작점 기준 최빈값 측정
+     (버그 수정: 모든 y에서 재측정 시 두께 3→1 오판).
+     `remove_staff_lines()` — 가로 연속성 → 세로 두께 2단계 검증.
+     `tests/test_staff_removal.py` 8개 (다양한 gap=15~30px 포함).
+
+  3. ✅ **음표 검출 + 음가 분류** (`note_recognition/note_detector.py`):
+     - 연결성분 분리 → 기둥 유무(h > staff_gap×2.5) → 머리 밀도
+       (HEAD_FILL_THRESHOLD=0.47) → 깃발 수(4-conn) 순서로 분류.
+     - 기둥 방향: bbox 상/하단 밀도 비교 + beam_splitter stem_up 힌트.
+     - 기둥 x: 중간 행 실제 픽셀에서 탐색 (bbox 추정은 ~10px 오차).
+     - `DetectedNote` (is_dotted 포함) + `DetectedRest` 분리.
+     - 점음표: 머리 오른쪽 4~60px blob 탐지 (`_detect_dot`).
+     - 쉼표: 블록형(전/2분, aspect>3) + 선형(4분/8분, h<gap×2, aspect<1).
+     알려진 한계:
+       - 16분음표 step=0~3: 두 번째 깃발이 오선 줄과 겹쳐 제거→eighth 오분류
+         (구조적 한계, 실제 교과서에서 발생 빈도 낮음)
+       - stem_down 빔: 두 번째 음표 sixteenth 오분류 가능 (빔이 깃발 탐색
+         범위와 겹침)
+     `tests/test_note_detector.py` 24개.
+
+  4. ✅ **빔 분리** (`note_recognition/beam_splitter.py`):
+     세로 투영 피크(최댓값의 30% 이상) = 기둥 위치 → 피크 사이 최솟값
+     구간 중점 = 분할선. 각 서브bbox에 `stem_up` 힌트(가로 투영 상하
+     비교)와 `stem_x` 힌트(피크 x) 반환. 3개 묶음까지 검증.
+     `tests/test_beam_splitter.py` 15개 (내부 함수 직접 테스트 포함).
+
+  5. ✅ **음높이 판정** (`note_recognition/note_pitcher.py`):
+     `head_y_to_staff_step()` = `round((line4_y - head_y) × 2 / staff_gap)`.
+     오차 허용: ±4px (짝수 step ±5px, 홀수 step ±4px — 실측).
+     `staff_step_to_pitch()` — treble/bass 온음계 매핑.
+     `Pitch` — name_with_octave + midi_note.
+     `tests/test_note_pitcher.py` 15개 (경계값, 왕복, 빔 그룹 음높이 포함).
+
+  6. ✅ **조표 + 마디 내 임시표** (`note_recognition/key_signature.py`):
+     `get_accidental_map(key_sig)` — Circle of Fifths 샵/플랫.
+     `apply_key_signature()` — 기존 임시표 우선.
+     `MeasureAccidentalState` — 마디 경계 reset() / 음표별 apply(pitch).
+     우선순위: 마디 내 임시표 > 조표. 제자리표(natural) 미지원
+     (accidental=""와 구분 불가).
+     `tests/test_key_signature.py` 20개.
+
+  7. ✅ **MusicXML 생성** (`note_recognition/xml_builder.py`):
+     음표/쉼표를 x좌표 기준 통합 정렬(`_make_events`).
+     마디 분리: `barlines` 있으면 x 비교, 없으면 박자 누산 fallback.
+     `MeasureAccidentalState`로 마디별 임시표 관리.
+     점음표: duration.dots=1 + quarterLength×1.5.
+     `tests/test_xml_builder.py` 21개 (barlines/beat 일관성, 조표 통합,
+     점음표+빔 MusicXML 포함).
+
+  8. ✅ **opencv 엔진 main.py 연동** (`opencv_runner.py`):
+     `python main.py full --engine opencv --pdf ... --orig ...` 사용 가능.
+     config.ini `[opencv]`에서 key_sig/time_sig/clef_type 읽음.
+     `compare-engines` 3개 엔진 비교로 확장.
+     `_build_measure_map_and_save_images()` — 페이지 이미지(150dpi)
+     저장 + 마디 위치 매핑. HTML 리포트 클릭 시 PDF 위치 하이라이트.
+
+  **합성 이미지 기준 정확도** (`python benchmark_opencv.py`):
+  음가 분류 100%(23/23) · 빔 분리 100% · 음높이 100% ·
+  점음표 100% · 쉼표 100% · 조표 100% → **전체 100%(54/54)**
+  ※ 16분음표 step=0~3 오선 겹침 케이스는 구조적 한계로 제외
 
 ## 로컬 테스트 시 확인 우선순위 (파라미터 튜닝 가이드)
 
 실제 교과서 PDF로 `python main.py full --engine opencv --pdf ... --orig ...` 실행 시
-아래 파라미터가 실제 폰트/DPI에 맞는지 확인 필요. 합성 이미지 기준 민감도 분석 결과:
+아래 순서로 확인. 모두 `config.ini [opencv]` 섹션에서 코드 수정 없이 조정 가능.
 
-| 파라미터 | 현재값 | 실제 위험도 | 설명 |
+| 파라미터 | 현재값 | 위험도 | 설명 |
 |---|---|---|---|
-| `HEAD_FILL_THRESHOLD` | 0.47 | **높음** | 2분음표(half) 여유 0.077만 남아있어 실제 인쇄에서 오분류 가능성 가장 높음 |
-| `_NOTEHEAD_RADIUS_RATIO` | 0.55 | 중간 | staff_gap 대비 음표머리 크기. 출판사별 폰트에 따라 달라짐 |
-| `_HAS_STEM_HEIGHT_RATIO` | 2.5 | 낮음 | whole vs 기둥있는 음표 구분 여유 30px 이상으로 안전 |
-| `min_horizontal_run` | 폭의 5% | 중간 | 오선 제거 기준. DPI에 비례해 조정 필요 |
+| `HEAD_FILL_THRESHOLD` | 0.47 | **높음** | half 여유 0.077. 실제 폰트에서 오분류 가능성 가장 높음 → 0.43~0.45 시도 |
+| `key_sig` | 0 | **높음** | 자동 감지 미구현. 악보 보고 직접 입력 (G장조=1, D장조=2, F장조=-1) |
+| `time_sig` | 4/4 | 중간 | 악보 보고 직접 입력 |
+| `_NOTEHEAD_RADIUS_RATIO` | 0.55 | 중간 | 출판사별 폰트에 따라 달라짐 |
+| `_HAS_STEM_HEIGHT_RATIO` | 2.5 | 낮음 | whole vs 기둥있는 음표 구분 여유 충분 |
+| `clef_type` | treble | 낮음 | 교과서 대부분 treble, 자동 감지 미구현 |
 
-**첫 테스트 권장 순서:**
-1. `python main.py full --engine opencv --pdf 교과서1페이지.pdf --orig ...` 실행
-2. 오분류 유형 확인: half→quarter 오분류가 많으면 `HEAD_FILL_THRESHOLD`를 0.43~0.45로 낮춤
-3. 음표 자체가 안 잡히면 `_NOTEHEAD_RADIUS_RATIO`를 0.50~0.60 범위에서 조정
-4. 파라미터는 `note_recognition/note_detector.py` 상단 상수에서 직접 수정
+**권장 실행 순서:**
+1. `python benchmark_opencv.py` — 합성 이미지 기준 100% 확인 (회귀 방지)
+2. `python main.py full --engine opencv --pdf 교과서1페이지.pdf --orig ...`
+3. half→quarter 오분류 多 → `head_fill_threshold` 낮춤
+4. 음표 미검출 → `notehead_radius_ratio` 조정
+5. 조표 틀림 → `key_sig` 수동 입력
+6. `python main.py compare-engines` — 3개 엔진 정확도 비교
 
 
 
 ```bash
 # 단일 PDF 변환 + XML 비교 + HTML 리포트 (가장 많이 쓰는 명령)
 python main.py full --pdf "path/to/score.pdf" --orig "path/to/original.mxl"
+
+# OpenCV 자체 OMR 엔진 사용
+python main.py full --engine opencv --pdf score.pdf --orig original.mxl
 
 # config.ini 기준 폴더 일괄 처리
 python main.py run
@@ -115,16 +142,17 @@ python main.py visual --pdf score.pdf --xml original.mxl
 # Finale PDF 직접 사용 (MuseScore 불필요)
 python main.py visual --pdf score.pdf --finale-pdf finale_export.pdf
 
-# 슬라이스 이미지를 파일로 덤프 (디버깅)
-python main.py visual --pdf score.pdf --xml original.mxl --dump-slices
-
 # 현재 설정 확인
 python main.py config
 
-# Audiveris vs homr 엔진 비교 (음높이/리듬 정확도 대조용, 타이는 homr가 미지원)
+# 3개 엔진 비교 (audiveris / homr / opencv)
 python main.py compare-engines --pdf score.pdf --orig original.mxl
 
-# 단위 테스트 (xml_comparator 타이 비교, 음표 인식 등 전체)
+# OpenCV 파이프라인 합성 이미지 벤치마크 (로컬 테스트 전 100% 확인)
+python benchmark_opencv.py
+python benchmark_opencv.py -v  # 실패 케이스 상세 출력
+
+# 단위 테스트 전체 (134개)
 python -m pytest tests/ -v
 
 # 합성 악보 이미지 직접 생성해서 눈으로 확인 (디버깅용)
@@ -222,68 +250,28 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
 
 ## TODO (미구현)
 
-- HTML 리포트에서 오류 클릭 시 PDF 원본 위치 하이라이트 (설계 문서: `~/.claude/projects/.../todo_pdf_highlight.md`)
-  - ✅ 좌표 매핑 기반 작업 완료: `pdf_parser.py`에 `StaffZone.measure_to_x_range()`/
-    `measure_bbox()`(마디 번호 → 픽셀 bbox, `x_to_measure()`의 역함수),
-    `build_measure_location_map()`(여러 페이지를 가로지르는 절대 마디 번호 →
-    페이지+bbox 전역 매핑, `main._extract_pdf_data()`의 절대 마디 번호
-    누산 규칙과 동일하게 맞춤) 추가. `tests/test_measure_location.py`
-    9개로 검증 (역함수 일관성, 페이지/오선 경계 넘는 번호 이어짐, y좌표
-    음수 클램프 등).
-  - 아직 안 한 것: (1) 이 매핑을 실제 HTML 리포트(`report_generator.py`)에
-    연결 - 클릭 시 PDF를 이미지로 보여주고 bbox 위치에 박스를 그리는
-    프론트엔드 작업. (2) PDF를 페이지 이미지로 변환해 HTML에 내장하거나
-    별도 서빙하는 방식 결정 필요 (base64 inline vs 별도 정적 파일).
-  - ✅ `main._extract_pdf_data()`의 절대 마디 번호 누산 로직을
-    `pdf_parser.iter_zones_with_start_measure()`(신규 공유 헬퍼)로
-    리팩터링해 중복 제거 완료. `build_measure_location_map()`이 쓰는
-    `iter_absolute_measures()`와 같은 누산 규칙을 공유하는지
-    교차 검증 테스트(`test_iter_zones_with_start_measure_matches_iter_absolute_measures`,
-    `test_extract_pdf_data_style_chord_numbering_matches_location_map`)로 확인.
-  - 여전히 음표 단위 정밀 좌표는 없음 (Audiveris 결과에 좌표 정보가 없어
-    마디 단위 bbox가 한계. 음표 단위로 가려면 Audiveris .omr 중간 파일이나
-    homr `--write-staff-positions` 옵션 활용 검토 필요 - 별도 트랙).
+- **HTML 리포트 PDF 위치 하이라이트**:
+  - ✅ **완료**: `report_generator.save_html(result, path, measure_location_map=...)`
+    — 오류 행에 `data-page`, `data-bbox` 속성 추가. 클릭 시 JS 오버레이로
+    `images/page_{n}.png` 위에 빨간 박스 표시.
+  - ✅ **완료**: `main._build_measure_map_and_save_images()` — `cmd_full` 시
+    자동으로 페이지 이미지(150dpi) + 마디 위치 매핑 생성.
+  - ✅ **완료**: `build_measure_location_map()`의 bbox y1을 다음 오선
+    `top_y - staff_h`로 클램프 (인접 오선 가사/코드 영역 겹침 방지).
+  - 여전히 음표 단위 정밀 좌표는 없음 (마디 단위 bbox가 한계).
 
-- **이음줄(tie/slur) 인식 개선** — 1단계 완료, 다음 단계 정리:
-  1. ✅ `xml_comparator.py`에 PDF측 `el.tie` 직접 비교 로직 추가 완료
-     (`tie_missing`/`tie_extra` kind 신설, `tests/test_tie_comparison.py`로 검증)
-  2. ✅ 인접 동일음높이 음표 합산 비교(`_detect_split_tie`) 추가 완료
-  3. ⏸️ **보류**: `homr` 엔진 연동(`homr_runner.py`)을 Audiveris 대안으로
-     추가했으나, **homr 0.6.2(PyPI)는 slur/tie를 MusicXML에 출력하지 않도록
-     의도적으로 비활성화되어 있음** (`build_note_chord()` 내 "Disabled
-     slurs and ties until the detection is more robust" 주석, 호출부
-     주석 처리됨). GPU 비용 대비 이득이 없어 보류 결정 (상단 "OMR 엔진
-     방향" 참고). GPU 환경 구축 + homr 쪽 타이 출력 복원 시 재검토.
-  - **현재 권장 방향**: 1·2번(순수 XML 후처리)을 실제 Audiveris 결과로
-    검증 — 지금까지는 music21로 합성한 가짜 시나리오로만 테스트함
-    (`tests/test_tie_comparison.py`). 실제 교과서 PDF 1개로
-    `python main.py full --pdf ... --orig ...` 돌려서 `tie_missing`/
-    `tie_suspect` 건수가 실제 채보 오류와 맞는지 사람이 확인 필요.
-    병행해서 OpenCV 기반 음표/오선 인식 정밀도를 높이는 작업(아래 신규
-    섹션) 진행.
+- **이음줄(tie/slur) 인식 개선** — 1단계 완료:
+  1. ✅ `xml_comparator.py`에 `tie_missing`/`tie_extra` 비교 완료
+  2. ✅ `_detect_split_tie` 추가 완료
+  3. ⏸️ **보류**: homr 0.6.2가 타이를 MusicXML에 출력하지 않아 보류.
 
-- `homr_runner.py`: ✅ 다중 페이지 PDF의 페이지별 결과(.musicxml) 병합 비교 구현 완료
-  (`merge_page_musicxmls()` - 마디 번호 1부터 재부여하여 단일 합본 XML 생성,
-  `main.py`의 `full --engine homr`/`compare-engines`에 자동 연결됨).
-  `tests/test_homr_merge.py`로 검증 (실제 모델 없이 가짜 페이지 XML로 테스트).
-  알려진 한계: 페이지 경계에서 조표/박자표가 실제로 바뀌는 악보는 부정확할 수 있음
-  (단순 이어붙이기라 attributes 재선언을 하지 않음) - 실측 필요.
-  ⏸️ 코드는 완성 상태로 보존하되 **사용은 보류** (상단 "OMR 엔진 방향" 참고).
+- **로컬 PDF 실측 후 튜닝 필요**:
+  - `HEAD_FILL_THRESHOLD=0.47` — 실제 폰트에서 half→quarter 오분류 가능성 높음
+  - `_NOTEHEAD_RADIUS_RATIO=0.55` — 출판사별 폰트에 따라 달라짐
+  - `key_sig`/`time_sig`/`clef_type` — 악보 보고 config.ini 직접 입력 필요
+    (자동 감지 미구현)
+  - 16분음표 step=0~3 오선 겹침 한계 — 실제 악보에서 발생 빈도 확인 필요
 
-- **정리 후보 (삭제하지 않고 보류, 본인 확인 필요)**:
-  - `check_pdf.py`: 최초 커밋(`f065f7b`) 이후 한 번도 수정 안 된 초기
-    프로토타입. docstring엔 "PaddleOCR" 사용한다고 적혀있지만 실제 코드는
-    EasyOCR을 import함 - 코드와 설명이 어긋난 죽은 스크립트로 보임.
-    `pdf_parser.py`가 사실상 이 로직을 흡수해 정식화한 상태. 개인 경로
-    하드코딩(`C:\Users\강우현\...`)도 포함. 더 이상 안 쓰면 삭제 또는
-    `scratch/`로 이동 권장.
-  - `musescore_renderer.py`: CLAUDE.md 외부 도구 표에도 "미설치, 현재
-    미사용"이라 명시됨. `xml_to_systems.py`(verovio 경로)로 대체된 듯.
-    실제 사용 여부 확인 후 정리 검토.
-
-- `homr_runner.py`: ⏸️ 보류 상태라 우선순위 낮음. 실제 모델 다운로드/추론을
-  거친 통합 테스트는 아직 없음 (이 컨테이너는
-  `release-assets.githubusercontent.com`이 네트워크 화이트리스트에 없어
-  `homr --init` 모델 다운로드 불가). GPU 환경 구축 후 재검토 시
-  `homr --init` 후 `python main.py compare-engines --pdf ... --orig ...`
-  실행 결과로 검증.
+- **정리 후보 (본인 확인 필요)**:
+  - `check_pdf.py`: 죽은 스크립트 (PaddleOCR 기재 but EasyOCR 사용, 개인 경로 하드코딩)
+  - `musescore_renderer.py`: verovio 경로로 대체, 미사용
