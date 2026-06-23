@@ -19,7 +19,7 @@ from pdf_parser import _detect_barlines, _detect_staves, _pdf_page_to_np
 
 # 오선 위·아래 여백 비율 (staff_h 기준)
 _PAD_TOP = 1.2   # 코드 기호 영역 포함
-_PAD_BOT = 1.6   # 가사 영역 포함
+_PAD_BOT = 3.5   # 2절 가사 + 작사/작곡 영역까지 포함; next_top-4 제약으로 다음 오선은 침범 안 함
 
 
 # ── 데이터 클래스 ────────────────────────────────────────────────────

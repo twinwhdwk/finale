@@ -165,6 +165,161 @@ def _extract_pdf_data(pdf_path: str):
         return None, None
 
 
+# ── 음표 비교 헬퍼 ────────────────────────────────────────────────────
+
+_NOTE_ORDER = {'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6}
+
+
+def _diatonic_dist(p1: str, p2: str) -> int:
+    try:
+        s1 = int(p1[1:]) * 7 + _NOTE_ORDER[p1[0]]
+        s2 = int(p2[1:]) * 7 + _NOTE_ORDER[p2[0]]
+        return abs(s1 - s2)
+    except Exception:
+        return 99
+
+
+def _classify_measure(det, xml, det_hollow, xml_hollow, excluded):
+    """마디 하나의 비교 결과 분류. (cls, extra, missing)"""
+    if excluded:
+        return 'det-excl', [], []
+    if not xml:
+        return ('det-superset', list(det), []) if det else ('det-ok', [], [])
+    if not det:
+        return 'det-miss', [], list(xml)
+
+    # missing / extra 계산
+    rem_xml = list(xml)
+    extra = []
+    for n in det:
+        if n in rem_xml:
+            rem_xml.remove(n)
+        else:
+            extra.append(n)
+    missing = rem_xml
+
+    if abs(len(det) - len(xml)) > 1:
+        return 'det-imbalance', extra, missing
+    if len(det) > len(xml) and missing:
+        return 'det-imbalance', extra, missing
+    if len(missing) > len(extra):
+        return 'det-imbalance', extra, missing
+
+    if not missing and not extra:
+        if xml_hollow and det_hollow and list(xml_hollow) != list(det_hollow):
+            return 'det-rhythm', [], []
+        return 'det-ok', [], []
+
+    if not missing:
+        return 'det-superset', extra, []
+
+    # missing AND extra 모두 존재 → 음정 거리 체크
+    rem_ext = list(extra)
+    has_close = False
+    for mn in missing:
+        for en in list(rem_ext):
+            if _diatonic_dist(mn, en) <= 2:
+                has_close = True
+                rem_ext.remove(en)
+                break
+    return ('det-err' if has_close else 'det-imbalance'), extra, missing
+
+
+def _detect_pitch_errors(
+    pairs,
+    xml_path: str,
+    mps: list,
+):
+    """
+    단별 음표 감지·비교.
+    Returns: (sys_measure_data, xml_total, mps_total, is_acc_xml)
+    """
+    from xml_note_extractor import (
+        extract_score_info, extract_note_types, extract_ties,
+        extract_lyrics, extract_chords, extract_measure_count,
+        is_accompaniment_xml,
+    )
+    from note_detector import detect_notes_and_ties_from_png
+
+    try:
+        clef, xml_notes = extract_score_info(xml_path)
+        xml_types  = extract_note_types(xml_path)
+        xml_ties   = extract_ties(xml_path)
+        xml_lyrics = extract_lyrics(xml_path)
+        xml_chords_map = extract_chords(xml_path)
+        xml_total  = extract_measure_count(xml_path)
+        is_acc     = is_accompaniment_xml(xml_notes)
+    except Exception as e:
+        print(f"  [경고] XML 파싱 실패: {e}")
+        return None, 0, 0, False
+
+    mps_total = sum(mps)
+    sys_measure_data = []
+
+    start_m = 1
+    for sys_idx, pair in enumerate(pairs):
+        n_measures = mps[sys_idx] if sys_idx < len(mps) else 0
+        sys_measures = []
+
+        # PNG 감지
+        det_pitches_per: list = []
+        det_hollows_per: list = []
+        arc_events: dict      = {}
+
+        if pair.textbook and not pair.textbook.is_svg and n_measures > 0:
+            try:
+                barlines_hint = None  # SystemSlice에 barlines 없음 (재감지)
+                det_pitches_per, det_hollows_per, arc_events = detect_notes_and_ties_from_png(
+                    pair.textbook.png_bytes, clef=clef, barlines_hint=barlines_hint
+                )
+            except Exception as e:
+                print(f"  [경고] 단 {sys_idx+1} 음표 감지 실패: {e}")
+
+        # 마디별 분류
+        for i in range(n_measures):
+            m_num    = start_m + i
+            excluded = (i == 0)
+
+            det_p = det_pitches_per[i] if i < len(det_pitches_per) else []
+            det_h = det_hollows_per[i] if i < len(det_hollows_per) else []
+            xml_p = xml_notes.get(m_num, [])
+            xml_h = xml_types.get(m_num, [])
+
+            cls, extra, missing = _classify_measure(det_p, xml_p, det_h, xml_h, excluded)
+
+            # arc/tie 이벤트 매핑
+            tie_issue = ''
+            if not excluded and arc_events:
+                ev = arc_events.get(i, {})
+                from note_detector import compare_ties
+                issues = compare_ties({i: ev}, xml_ties, start_m)
+                tie_issue = issues.get(m_num, '')
+
+            chord_str = ' '.join(xml_chords_map.get(m_num, []))
+            lyrics_list = xml_lyrics.get(m_num, [])
+            lyric_str = ' / '.join(lyrics_list) if lyrics_list else ''
+
+            sys_measures.append({
+                'num':       m_num,
+                'cls':       cls,
+                'chord':     chord_str,
+                'lyric':     lyric_str,
+                'xml_notes': list(xml_p),
+                'det_notes': list(det_p),
+                'xml_hollow': [bool(v) for v in xml_h],
+                'det_hollow': [bool(v) for v in det_h],
+                'extra':     list(extra),
+                'missing':   list(missing),
+                'tie_issue': tie_issue,
+                'excluded':  bool(excluded),
+            })
+
+        sys_measure_data.append(sys_measures)
+        start_m += n_measures
+
+    return sys_measure_data, xml_total, mps_total, is_acc
+
+
 # ── run (config.ini 기반 전체 실행) ──────────────────────────────────
 
 def cmd_run(args):
@@ -370,11 +525,137 @@ def cmd_visual(args):
         save_slices_to_disk(textbook, out_dir / f"{stem}_tb_slices")
         save_slices_to_disk(finale,   out_dir / f"{stem}_fn_slices")
 
+    pairs = pair_systems(textbook, finale)
+
+    # 음표 비교 분석 (XML 있을 때만)
+    sys_measure_data = None
+    xml_total  = 0
+    is_acc_xml = False
+    if args.xml:
+        print(f"\n[+] 음표 비교 분석 중 (단별 감지)...")
+        sys_measure_data, xml_total, mps_total, is_acc_xml = _detect_pitch_errors(
+            pairs, args.xml, mps
+        )
+        if is_acc_xml:
+            print("    반주 전용 XML 감지됨 — superset/imbalance 정상 패턴")
+
     # 3. HTML 생성
     print(f"\n[3/3] HTML 뷰어 생성")
-    pairs     = pair_systems(textbook, finale)
     html_path = out_dir / f"{stem}_visual.html"
-    save_visual_html(pairs, textbook, finale, str(html_path))
+    save_visual_html(
+        pairs, textbook, finale, str(html_path),
+        sys_measure_data=sys_measure_data,
+        xml_total=xml_total,
+        mps_total=sum(mps),
+        is_acc_xml=is_acc_xml,
+    )
+
+
+# ── batch (전체 PDF-XML 쌍 음표 통계) ────────────────────────────────
+
+def _count_sys(sys_measures: list) -> tuple:
+    """단(system) 단위 통계: (_ok, _err, _err_m, _sup, _imb, _mis)"""
+    _ok = _err = _err_m = _sup = _imb = _mis = 0
+    for m in sys_measures:
+        cls = m.get('cls', '')
+        if m.get('excluded'):
+            continue
+        if cls == 'det-ok' or cls == 'det-rhythm':
+            _ok += 1
+        elif cls == 'det-err':
+            _err += len(m.get('missing', []))
+            _err_m += 1
+        elif cls == 'det-superset':
+            _sup += 1
+        elif cls == 'det-imbalance':
+            _imb += 1
+        elif cls == 'det-miss':
+            _mis += 1
+    # 시스템 단위 피아노 혼재 보정: sup+imb≥ok이고 err 잔존
+    if (_sup + _imb) >= _ok and _err_m > 0:
+        _imb += _err_m
+        _err = 0
+        _err_m = 0
+    return _ok, _err, _err_m, _sup, _imb, _mis
+
+
+def cmd_batch(args):
+    """전체 PDF-XML 쌍에 대해 음표 비교 통계를 출력합니다."""
+    from system_slicer import slice_pdf_to_systems, pair_systems
+
+    paths   = config_loader.get_paths()
+    pdf_dir = Path(paths["pdf_dir"])
+    xml_dir = Path(paths["xml_dir"])
+
+    _check_dir(pdf_dir, "pdf_dir")
+    _check_dir(xml_dir, "xml_dir")
+
+    pdf_files = sorted(pdf_dir.glob("*.pdf"))
+    name_filter = getattr(args, 'name', None)
+    if name_filter:
+        pdf_files = [p for p in pdf_files if name_filter in p.stem]
+
+    if not pdf_files:
+        print("해당하는 PDF 파일이 없습니다.")
+        return
+
+    print(f"\n{'곡명':<42} {'ok':>5} {'err':>5} {'sup':>5} {'imb':>5} {'mis':>5} {'상태':<8} 비고")
+    print("─" * 110)
+
+    total_ok = total_err = total_sup = total_imb = total_mis = 0
+    total_err_m = 0
+
+    for pdf in pdf_files:
+        stem = pdf.stem
+        xml_path = _find_orig_xml(xml_dir, stem)
+        if xml_path is None:
+            continue
+
+        try:
+            textbook = slice_pdf_to_systems(str(pdf), dpi=600)
+            mps      = textbook.measures_per_system
+            if not mps or all(m == 0 for m in mps):
+                continue
+
+            # 더미 pairs: textbook 슬라이스만 사용
+            class _FakePair:
+                def __init__(self, tb): self.textbook = tb; self.finale = None; self.abs_system = 0
+            pairs = [_FakePair(s) for s in textbook.systems]
+
+            sys_data, xml_total, mps_total, is_acc = _detect_pitch_errors(
+                pairs, str(xml_path), mps
+            )
+            if sys_data is None:
+                continue
+
+            ok = err = err_m = sup = imb = mis = 0
+            for sys_m in sys_data:
+                _ok, _err, _em, _sup, _imb, _mis = _count_sys(sys_m)
+                ok  += _ok;  err  += _err;  err_m += _em
+                sup += _sup; imb  += _imb;  mis   += _mis
+
+            # 전역 피아노 혼재 보정
+            note_piano = (sup + imb) >= ok and err_m < (sup + imb) and (sup + imb) >= 5
+            if note_piano:
+                err = 0; err_m = 0
+
+            state = '반주' if is_acc else ('ERR' if err_m > 0 else 'OK')
+            note  = '피아노혼재' if note_piano else ''
+            if xml_total and mps_total and xml_total != mps_total:
+                note += f' mps/xml={mps_total}/{xml_total}'
+
+            name_disp = stem[:40]
+            print(f"{name_disp:<42} {ok:>5} {err:>5} {sup:>5} {imb:>5} {mis:>5} {state:<8} {note}")
+            total_ok += ok; total_err += err_m; total_sup += sup
+            total_imb += imb; total_mis += mis; total_err_m += err_m
+
+        except Exception as e:
+            print(f"{stem[:40]:<42} {'':>5} {'':>5} {'':>5} {'':>5} {'':>5} {'오류':<8} {e}")
+
+    print("─" * 110)
+    print(f"{'총계':<42} {total_ok:>5} {total_err_m:>5} {total_sup:>5} {total_imb:>5} {total_mis:>5}")
+    err_songs = total_err_m  # err_m already per-measure-set
+    print(f"\n총계 {total_err} 음 불일치 | 신뢰 가능 (ERR): {err_songs}건")
 
 
 # ── compare-engines (Audiveris vs homr 비교) ───────────────────────────
@@ -523,6 +804,11 @@ def main():
     p_batch.add_argument("--pdf-dir",    help="PDF 폴더 (기본값: config.ini pdf_dir)")
     p_batch.add_argument("--output-dir", help="저장 폴더 (기본값: config.ini converted_xml_dir)")
     p_batch.set_defaults(func=cmd_batch_convert)
+
+    # batch
+    p_bat = sub.add_parser("batch", help="전체 PDF-XML 쌍 음표 비교 통계 (ok/err/sup/imb/mis)")
+    p_bat.add_argument("--name", default=None, help="곡명 필터 (일부 문자열 포함)")
+    p_bat.set_defaults(func=cmd_batch)
 
     # compare-engines
     p_cmp_eng = sub.add_parser(
