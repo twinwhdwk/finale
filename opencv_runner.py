@@ -33,9 +33,12 @@ from pathlib import Path
 
 
 def _staff_gap_from_zone(zone) -> int:
-    """StaffZone에서 오선 간격을 반환한다."""
-    # StaffZone은 5줄이고 top_y~bot_y가 4*staff_gap
-    return max(1, (zone.bot_y - zone.top_y) // 4)
+    """StaffZone 또는 (top_y, bot_y) 튜플에서 오선 간격을 반환한다."""
+    if isinstance(zone, tuple):
+        top_y, bot_y = zone
+    else:
+        top_y, bot_y = zone.top_y, zone.bot_y
+    return max(1, (bot_y - top_y) // 4)
 
 
 def convert_pdf_to_xml(
@@ -136,7 +139,9 @@ def _process_page(
     from note_recognition.note_detector import detect_notes, NoteDetectionResult, DetectedNote
     from note_recognition.xml_builder import save_musicxml
 
-    img_gray = _pdf_page_to_np(pdf_path, page_num=page_num, dpi=dpi)
+    import cv2 as _cv2
+    img_rgb = _pdf_page_to_np(pdf_path, page_num=page_num, dpi=dpi)
+    img_gray = _cv2.cvtColor(img_rgb, _cv2.COLOR_RGB2GRAY) if img_rgb.ndim == 3 else img_rgb
 
     # ── 오선 위치 검출 ──
     zones = _detect_staves(img_gray)
@@ -145,30 +150,34 @@ def _process_page(
 
     print(f"    {len(zones)}개 오선 시스템 감지")
 
+    from pdf_parser import _detect_barlines
+
     # ── 오선별 음표 검출 ──
     all_detected_notes = []
-    # 첫 번째 오선에서 두께 측정 (전 페이지 동일하다고 가정)
-    first_zone = zones[0]
-    staff_gap_0 = _staff_gap_from_zone(first_zone)
+    first_top, first_bot = zones[0]
+    staff_gap_0 = _staff_gap_from_zone(zones[0])
     line_thickness = detect_staff_line_thickness(
-        img_gray, [(first_zone.top_y, first_zone.bot_y)]
+        img_gray, [(first_top, first_bot)]
     )
     print(f"    오선 두께={line_thickness}px, 간격≈{staff_gap_0}px")
 
     all_detected_arcs = []
-    for zone in zones:
+    first_barlines: list[int] = []
+    for zi, zone in enumerate(zones):
+        top_y, bot_y = zone
         staff_gap = _staff_gap_from_zone(zone)
+        zone_barlines = _detect_barlines(img_gray, top_y, bot_y)
+        if zi == 0:
+            first_barlines = zone_barlines
         # x_start: 오선 왼쪽 헤더(음자리표/박자표/조표) 영역을 음표 검출에서 제외.
-        # 마디선이 있으면 첫 마디선에서 staff_gap*3 왼쪽을 시작점으로 추정.
-        # 마디선이 없으면 이미지 폭의 10% (일반적인 헤더 폭 추정).
-        if zone.barlines:
-            x_start = max(0, zone.barlines[0] - staff_gap * 3)
+        if zone_barlines:
+            x_start = max(0, zone_barlines[0] - staff_gap * 3)
         else:
             x_start = img_gray.shape[1] // 10
         result = detect_notes(
             img_gray,
-            staff_top_y=zone.top_y,
-            staff_bot_y=zone.bot_y,
+            staff_top_y=top_y,
+            staff_bot_y=bot_y,
             staff_gap=staff_gap,
             line_thickness=line_thickness,
             x_start=x_start,
@@ -185,16 +194,15 @@ def _process_page(
     page_result = NoteDetectionResult(
         notes=all_detected_notes,
         arcs=all_detected_arcs,
-        staff_top_y=zones[0].top_y,
-        staff_bot_y=zones[0].bot_y,
+        staff_top_y=first_top,
+        staff_bot_y=first_bot,
         line_thickness=line_thickness,
         staff_gap=staff_gap_0,
     )
 
     # ── MusicXML 저장 (마디선 정보 연결) ──
     # 첫 번째 오선의 barlines를 대표 마디선으로 사용.
-    # 여러 오선이 있으면 각 오선의 마디선 수가 같다고 가정 (표준 악보).
-    barlines = zones[0].barlines if zones else []
+    barlines = first_barlines
     if barlines:
         print(f"    마디선 {len(barlines)}개 감지 → {len(barlines)+1}마디")
 
