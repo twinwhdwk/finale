@@ -230,8 +230,10 @@ def _detect_barlines(img_gray: np.ndarray, top_y: int, bot_y: int) -> list[int]:
     # 4. 공간 필터 (클레프/조표 좌측, 오선 끝 우측 제외)
     filtered = [x for x in merged_x if x > w * 0.15 and x < w * 0.89]
 
-    # 5. 비첫오선 왼쪽 경계선 제거 (< 25% 위치의 첫 마디선)
-    if filtered and filtered[0] < w * 0.25:
+    # 5. 비첫오선 왼쪽 경계선 제거 (< 20% 위치의 첫 마디선)
+    #    25%에서 20%로 낮춤: 첫 시스템의 좁은 첫 마디선(~23%)이 제거되던 문제 해결.
+    #    비첫 오선의 클레프 경계선은 대체로 6~15% 범위이므로 영향 없음.
+    if filtered and filtered[0] < w * 0.20:
         filtered.pop(0)
 
     # 6. 겹침표 이중선 제거 (300px 미만 간격)
