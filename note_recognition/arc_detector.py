@@ -125,4 +125,18 @@ def detect_arcs(
             cut_left=cut_left, cut_right=cut_right,
         ))
 
-    return arcs
+    # 같은 붙임줄의 상·하단 획이 두 컨투어로 분리되는 경우를 NMS로 병합.
+    # 실제 중복은 x0·x1 오차 < 20px, cy 차 < 15px로 구별되므로 절대값 기준 사용.
+    # gap-relative 기준은 gap이 큰 스태프에서 다른 음 사이 슬러를 오병합함.
+    arcs.sort(key=lambda a: a.width, reverse=True)
+    kept: list[ArcCandidate] = []
+    for a in arcs:
+        dup = False
+        for k in kept:
+            if (abs(a.x0 - k.x0) < 20 and abs(a.x1 - k.x1) < 20
+                    and abs(a.cy - k.cy) < 15):
+                dup = True
+                break
+        if not dup:
+            kept.append(a)
+    return kept
