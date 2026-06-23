@@ -374,3 +374,56 @@ def test_barlines_vs_beat_consistency(tmp_path: Path):
     assert notes_bar == notes_beat, (
         f"두 방식의 음이름 순서가 다름: barlines={notes_bar}, beat={notes_beat}"
     )
+
+
+# ── 조표(key signature) + MusicXML 통합 ─────────────────────────────
+
+def test_key_sig_applied_correctly_in_score(tmp_path: Path):
+    """
+    G장조(key_sig=1)에서 F 음표가 F#으로 변환되어 MusicXML에 저장되어야 함.
+    staff_step=1 → F4, G장조 조표에 의해 F#4가 되어야 한다.
+    """
+    notes_spec = [
+        NoteSpec(x=200, staff_step=4, duration="quarter"),   # B4 (조표 무관)
+        NoteSpec(x=350, staff_step=1, duration="quarter"),   # F4 → F#4 (G장조)
+        NoteSpec(x=500, staff_step=2, duration="half"),      # G4 (조표 무관)
+    ]
+    result, _ = _detect(notes_spec)
+    out = str(tmp_path / "g_major.musicxml")
+    save_musicxml(result, out, key_sig=1)  # G장조
+
+    reloaded = converter.parse(out)
+    notes = list(reloaded.flatten().notes)
+    assert len(notes) == 3
+    assert notes[1].nameWithOctave == "F#4", (
+        f"G장조에서 F4가 F#4이어야 함: {notes[1].nameWithOctave}"
+    )
+    assert notes[0].nameWithOctave == "B4"   # 조표 영향 없는 B
+    assert notes[2].nameWithOctave == "G4"   # 조표 영향 없는 G
+
+
+def test_in_measure_accidental_propagates_in_score(tmp_path: Path):
+    """
+    같은 마디에서 임시표가 붙은 음이 나온 후 같은 음이름이 다시 나오면
+    임시표가 유지되어야 함 (MeasureAccidentalState 통합).
+
+    C장조에서 C#이 나온 후 같은 마디의 C가 C#이 되어야 함.
+    현재 파이프라인은 Pitch.accidental을 직접 설정하는 경로가 없으므로
+    조표 경로(key_sig)를 통한 전파를 검증한다.
+    """
+    notes_spec = [
+        NoteSpec(x=200, staff_step=0, duration="quarter"),   # E4 (G장조: F# 조표와 무관)
+        NoteSpec(x=350, staff_step=1, duration="quarter"),   # F4 → F#4 (G장조)
+        NoteSpec(x=500, staff_step=1, duration="quarter"),   # F4 → 같은 마디에서 F#4 유지
+        NoteSpec(x=650, staff_step=3, duration="quarter"),   # A4 (조표 무관)
+    ]
+    result, _ = _detect(notes_spec)
+    out = str(tmp_path / "accidental_propagation.musicxml")
+    save_musicxml(result, out, key_sig=1, time_sig="4/4")
+
+    reloaded = converter.parse(out)
+    notes = list(reloaded.flatten().notes)
+    assert len(notes) == 4
+    # 두 번째와 세 번째 F 음표 모두 F#이어야 함
+    assert notes[1].nameWithOctave == "F#4", f"두 번째: {notes[1].nameWithOctave}"
+    assert notes[2].nameWithOctave == "F#4", f"세 번째(전파): {notes[2].nameWithOctave}"

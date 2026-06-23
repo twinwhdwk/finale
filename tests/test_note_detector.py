@@ -345,3 +345,69 @@ def test_x_start_masks_header_region():
                             line_thickness=t, x_start=250)
     assert len(r_masked.notes) == 1, f"x_start 마스킹 실패: {len(r_masked.notes)}개 검출"
     assert r_masked.notes[0].head_x > 250
+
+
+# ── 다양한 staff_gap 견고성 ──────────────────────────────────────────
+
+def test_pipeline_robust_for_various_staff_gaps():
+    """
+    staff_gap이 다를 때도 기본 음가 분류가 동작해야 함.
+    실제 교과서 PDF의 일반 범위(18~25px)에서 검증.
+
+    알려진 한계: staff_gap=15px처럼 극단적으로 작은 경우
+    half 음표의 density가 threshold를 초과해 quarter로 오분류될 수 있음.
+    """
+    for gap in [18, 20, 22, 25]:
+        spec = SyntheticScoreSpec(
+            notes=[
+                NoteSpec(x=200, staff_step=4, duration="quarter"),
+                NoteSpec(x=400, staff_step=4, duration="whole"),
+            ],
+            staff_gap=gap,
+            notehead_radius=int(gap * 0.55),
+        )
+        img, gt, _ = render_synthetic_staff(spec)
+        top_y = spec.staff_top
+        bot_y = spec.staff_top + 4 * spec.staff_gap
+        t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+        result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+        correct = sum(n.duration == g["duration"] for n, g in zip(result.notes, gt))
+        assert correct == 2, (
+            f"staff_gap={gap}: 2/2 정확도 기대, {correct}/2 검출 "
+            f"({[(n.duration, g['duration']) for n, g in zip(result.notes, gt)]})"
+        )
+
+
+# ── 덧줄 음표(오선 밖) ───────────────────────────────────────────────
+
+def test_ledger_line_note_detected_correctly():
+    """
+    오선 밖 덧줄 음표도 검출(누락 없음)되어야 함.
+
+    현재 한계:
+    - staff_step=-2 (Middle C, 오선 아래) → quarter 정확 분류 가능.
+    - staff_step=10 (오선 위 2칸 이상) → half 음표가 density 경계값(0.47)
+      근처(0.479)에 걸려 quarter로 오분류될 수 있음.
+      오선에서 멀수록 bbox 크기 대비 밀도 계산이 달라져 발생하는 파라미터 한계.
+      실제 교과서 악보에서 오선 위 3칸 이상의 덧줄 음표는 드물어 허용.
+
+    검출 자체는 반드시 성공해야 함 (누락 금지).
+    """
+    # step=-2: quarter 분류 정확
+    spec = SyntheticScoreSpec(notes=[NoteSpec(x=300, staff_step=-2, duration="quarter")])
+    img, gt, _ = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+    assert len(result.notes) >= 1, "step=-2 (Middle C) 덧줄 음표 미검출"
+    assert result.notes[0].duration == "quarter", (
+        f"step=-2: quarter 기대, {result.notes[0].duration} 검출"
+    )
+
+    # step=10: 검출은 되어야 함 (음가 오분류는 현재 파라미터 한계로 허용)
+    spec2 = SyntheticScoreSpec(notes=[NoteSpec(x=300, staff_step=10, duration="half")])
+    img2, gt2, _ = render_synthetic_staff(spec2)
+    t2 = detect_staff_line_thickness(img2, [(top_y, bot_y)])
+    result2 = detect_notes(img2, top_y, bot_y, staff_gap=spec2.staff_gap, line_thickness=t2)
+    assert len(result2.notes) >= 1, "step=10 (오선 위 덧줄) 음표 미검출"
