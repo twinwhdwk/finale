@@ -155,6 +155,7 @@ def _process_page(
     )
     print(f"    오선 두께={line_thickness}px, 간격≈{staff_gap_0}px")
 
+    all_detected_arcs = []
     for zone in zones:
         staff_gap = _staff_gap_from_zone(zone)
         # x_start: 오선 왼쪽 헤더(음자리표/박자표/조표) 영역을 음표 검출에서 제외.
@@ -173,17 +174,17 @@ def _process_page(
             x_start=x_start,
         )
         all_detected_notes.extend(result.notes)
+        all_detected_arcs.extend(result.arcs)
 
     if not all_detected_notes:
         raise RuntimeError(f"페이지 {page_num + 1}: 음표를 검출하지 못했습니다")
 
-    print(f"    {len(all_detected_notes)}개 음표 검출")
+    print(f"    {len(all_detected_notes)}개 음표 / {len(all_detected_arcs)}개 호(arc) 검출")
 
     # ── 전체 페이지 NoteDetectionResult 조립 ──
-    # 여러 오선의 결과를 하나로 합치기 위해 대표 오선 파라미터 사용
-    # (향후: 오선별로 별도 Part 생성하는 이성부 분리로 확장 가능)
     page_result = NoteDetectionResult(
         notes=all_detected_notes,
+        arcs=all_detected_arcs,
         staff_top_y=zones[0].top_y,
         staff_bot_y=zones[0].bot_y,
         line_thickness=line_thickness,
