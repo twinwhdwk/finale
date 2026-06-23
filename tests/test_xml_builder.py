@@ -427,3 +427,28 @@ def test_in_measure_accidental_propagates_in_score(tmp_path: Path):
     # 두 번째와 세 번째 F 음표 모두 F#이어야 함
     assert notes[1].nameWithOctave == "F#4", f"두 번째: {notes[1].nameWithOctave}"
     assert notes[2].nameWithOctave == "F#4", f"세 번째(전파): {notes[2].nameWithOctave}"
+
+
+def test_dotted_note_in_beam_group(tmp_path: Path):
+    """
+    빔 그룹 안의 점음표가 음가(dotted eighth = 0.75박)로 저장되어야 함.
+    """
+    notes_spec = [
+        NoteSpec(x=200, staff_step=4, duration="eighth", dotted=True, beam_to_next=True),
+        NoteSpec(x=350, staff_step=6, duration="eighth"),
+    ]
+    result, _ = _detect(notes_spec)
+    out = str(tmp_path / "dotted_beam.musicxml")
+    save_musicxml(result, out, time_sig="4/4")
+
+    reloaded = converter.parse(out)
+    notes = list(reloaded.flatten().notes)
+    assert len(notes) == 2, f"음표 2개 기대: {len(notes)}"
+    # 첫 번째: 점8분음표 = 0.75박
+    assert abs(notes[0].quarterLength - 0.75) < 0.01, (
+        f"점8분음표 0.75박 기대: {notes[0].quarterLength}"
+    )
+    # 두 번째: 8분음표 = 0.5박
+    assert abs(notes[1].quarterLength - 0.5) < 0.01, (
+        f"8분음표 0.5박 기대: {notes[1].quarterLength}"
+    )

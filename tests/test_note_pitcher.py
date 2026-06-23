@@ -266,3 +266,39 @@ def test_head_y_error_causes_wrong_pitch_at_boundary():
         f"half_gap={half_gap}px 오차에서도 step=1이 유지됨 - "
         "경계값 동작 이상"
     )
+
+
+# ── 빔 그룹에서 음높이 판정 ──────────────────────────────────────────
+
+def test_beamed_notes_pitch_detected_correctly():
+    """
+    빔으로 연결된 음표 그룹에서도 각 음표의 음높이가 정확히 판정되어야 함.
+
+    빔 분리(beam_splitter) 후 head_y가 올바르게 추정되면
+    head_y_to_pitch()도 정확히 작동한다.
+    """
+    import sys as _sys2
+    _sys2.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+    from synthetic_score import SyntheticScoreSpec, NoteSpec, render_synthetic_staff
+    from note_recognition.staff_removal import detect_staff_line_thickness
+    from note_recognition.note_detector import detect_notes
+
+    spec = SyntheticScoreSpec(notes=[
+        NoteSpec(x=200, staff_step=2, duration="eighth", beam_to_next=True),  # G4
+        NoteSpec(x=320, staff_step=4, duration="eighth", beam_to_next=True),  # B4
+        NoteSpec(x=440, staff_step=6, duration="eighth"),                       # D5
+    ])
+    img, gt, _ = render_synthetic_staff(spec)
+    top_y = spec.staff_top
+    bot_y = spec.staff_top + 4 * spec.staff_gap
+    t = detect_staff_line_thickness(img, [(top_y, bot_y)])
+    result = detect_notes(img, top_y, bot_y, staff_gap=spec.staff_gap, line_thickness=t)
+
+    assert len(result.notes) == 3, f"빔 3개 분리 실패: {len(result.notes)}개"
+    expected = ["G4", "B4", "D5"]
+    for i, (note, exp) in enumerate(zip(result.notes, expected)):
+        p = head_y_to_pitch(note.head_y, top_y, spec.staff_gap)
+        assert p.name_with_octave == exp, (
+            f"빔 음표[{i}]: 기대={exp}, 검출={p.name_with_octave} "
+            f"(head_y={note.head_y})"
+        )
