@@ -113,9 +113,17 @@ def detect_arcs(
         up_ness   = end_avg - apex_y
         down_ness = base_y  - end_avg
 
-        # 직선(빔 아티팩트)은 곡률 ≈ 0 → 제외
-        if max(up_ness, down_ness) < 2.0:
+        curv = max(up_ness, down_ness)
+
+        # 직선(빔 아티팩트)은 곡률 ≈ 0 → 제외.
+        # 저곡률 호(1.0 ≤ curv < 2.0)는 오선 내부 또는 바로 위·아래(1gap 이내)에
+        # 있을 때만 허용. 그 아래(가사 영역)의 extender line 등 FP를 억제.
+        if curv < 1.0:
             continue
+        if curv < 2.0:
+            cy_abs = int(end_avg)
+            if cy_abs > staff_bot_y + staff_gap:
+                continue
 
         convex = 'up' if up_ness > down_ness else 'down'
         cy = int(end_avg)
