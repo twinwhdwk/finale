@@ -187,6 +187,16 @@ def split_beam_component(
     return results if len(results) >= 2 else None
 
 
+def _is_barline(w: int, h: int, notehead_radius: int) -> bool:
+    """
+    연결성분이 마디선(세로 직선)인지 판별한다.
+
+    마디선은 폭이 1~3px으로 매우 좁고, 오선 전체 높이보다 훨씬 길다.
+    notehead_radius × 8 이상의 h + w < 6이면 마디선으로 본다.
+    """
+    return w < 6 and h > notehead_radius * 8
+
+
 def split_all_beam_components(
     binary: np.ndarray,
     stats: np.ndarray,
@@ -211,6 +221,10 @@ def split_all_beam_components(
 
         bx, by, bw, bh = int(stats[i][0]), int(stats[i][1]), int(stats[i][2]), int(stats[i][3])
         bbox = (bx, by, bw, bh)
+
+        # 마디선(세로 직선) 제거
+        if _is_barline(bw, bh, notehead_radius):
+            continue
 
         if is_beam_component(bw, bh, notehead_radius):
             sub_results = split_beam_component(binary, bbox, notehead_radius)

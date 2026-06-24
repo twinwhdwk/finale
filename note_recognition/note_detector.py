@@ -12,7 +12,7 @@
 
 ### 2. 머리 채움 여부 → half vs quarter/eighth/sixteenth
    - 음표머리 추정 영역(중심 ± notehead_radius px)에서 픽셀 밀도 계산
-   - density > HEAD_FILL_THRESHOLD(0.47) → 채워진 머리(quarter 이하)
+   - density > HEAD_FILL_THRESHOLD(0.50) → 채워진 머리(quarter 이하)
    - density ≤ 0.47 → 빈 머리(half)
 
 ### 3. 깃발 개수 → quarter / eighth / sixteenth
@@ -41,7 +41,9 @@ import numpy as np
 
 # ── 상수 (config.ini [opencv] 섹션으로 오버라이드 가능) ───────────────
 
-HEAD_FILL_THRESHOLD = 0.47   # 채워진 머리 판정 임계값 (quarter 이하)
+HEAD_FILL_THRESHOLD = 0.50   # 채워진 머리 판정 임계값 (quarter 이하)
+# 합성 이미지 실측: half 최대=0.486(칸 위치), quarter 최소=0.576 → 여유 0.09
+# 0.47에서는 half가 칸(홀수 step) 위치에서 quarter로 오분류됨
 MIN_NOTE_AREA = 50            # 노이즈/아티팩트 제거용 최소 픽셀 수
 _NOTEHEAD_RADIUS_RATIO = 0.55  # notehead 반지름 / staff_gap 비율
 _HAS_STEM_HEIGHT_RATIO = 2.5   # 기둥 판정 높이 배율
@@ -244,7 +246,24 @@ def _classify_duration(
             head_x = stem_x_hint + (notehead_radius - 2)
         head_x = int(np.clip(head_x, x, x + w))
     else:
-        head_x = x + w // 2
+        # 기둥 중간 행에서 실제 픽셀로 stem_x 탐색 → head_x 역산
+        # bbox 중심 추정은 깃발이 있는 eighth/sixteenth에서 ~6px 오차 발생
+        if stem_up_guess:
+            mid_y_s = int(np.clip((y + max(y, head_y - notehead_radius)) // 2,
+                                   0, binary.shape[0] - 1))
+        else:
+            mid_y_s = int(np.clip((min(bot, head_y + notehead_radius) + bot) // 2,
+                                   0, binary.shape[0] - 1))
+        row = binary[mid_y_s, x: x + w]
+        stem_pxs = [x + i for i, v in enumerate(row) if v > 0]
+        if stem_pxs:
+            if stem_up_guess:
+                head_x = max(stem_pxs) - (notehead_radius - 2)
+            else:
+                head_x = min(stem_pxs) + (notehead_radius - 2)
+            head_x = int(np.clip(head_x, x, x + w))
+        else:
+            head_x = x + w // 2  # fallback
 
     # ── 3단계: 머리 밀도 → half vs (quarter/eighth/sixteenth) 구분 ──
     head_region = binary[
