@@ -256,7 +256,11 @@ def _detect_pitch_errors(
     mps_total = sum(mps)
     sys_measure_data = []
 
-    start_m = 1
+    # XML에 pickup 마디(measure 0)가 있으면 start_m=0으로 맞춤.
+    # PDF 바라인 감지가 pickup 바라인을 잡은 경우 첫 단 segment 0(excluded)이
+    # pickup에 대응하고, segment 1이 실제 마디 1에 대응한다.
+    has_pickup = bool(xml_notes.get(0))
+    start_m = 0 if has_pickup else 1
     for sys_idx, pair in enumerate(pairs):
         n_measures = mps[sys_idx] if sys_idx < len(mps) else 0
         sys_measures = []
@@ -487,6 +491,36 @@ def cmd_batch_convert(args):
     batch_convert(pdf_dir, out_dir)
 
 
+def _adjust_mps_for_xml(mps: list[int], xml_path: str) -> list[int]:
+    """
+    PDF 바라인 감지 기반 measures_per_system이 XML 실제 마디수와 다를 때
+    비례 배분으로 조정해 verovio 레이아웃을 맞춥니다.
+
+    PDF에 겹침표·이중선이 과잉 감지되거나 pickup 마디 불일치가 있을 때 사용.
+    note 비교용 mps(원본)는 별도로 유지하고 이 값은 xml_to_systems()에만 전달.
+    """
+    try:
+        from xml_note_extractor import extract_measure_count
+        xml_total = extract_measure_count(xml_path)
+    except Exception:
+        return mps
+
+    pdf_total = sum(mps)
+    if not xml_total or pdf_total == xml_total:
+        return mps
+
+    ratios = [m / pdf_total for m in mps]
+    adjusted: list[int] = []
+    remaining = xml_total
+    for r in ratios[:-1]:
+        n = max(1, round(xml_total * r))
+        adjusted.append(n)
+        remaining -= n
+    adjusted.append(max(1, remaining))
+    print(f"  [마디수 조정] PDF={pdf_total} / XML={xml_total}: {mps} → {adjusted}")
+    return adjusted
+
+
 # ── visual (단 단위 시각 비교) ────────────────────────────────────────
 
 def cmd_visual(args):
@@ -524,7 +558,8 @@ def cmd_visual(args):
     if args.xml:
         print(f"\n[1/3] Finale XML → 단별 SVG 렌더링 (PDF 레이아웃 강제)")
         try:
-            finale = xml_to_systems(args.xml, measures_per_system=mps)
+            mps_for_xml = _adjust_mps_for_xml(mps, args.xml)
+            finale = xml_to_systems(args.xml, measures_per_system=mps_for_xml)
         except RuntimeError as e:
             print(f"  오류: {e}")
             sys.exit(1)
@@ -612,7 +647,8 @@ def cmd_batch_visual(args):
             mps      = textbook.measures_per_system
             print(f"  교과서: {textbook.total_systems}단, 단별 마디 수: {mps}")
 
-            finale = xml_to_systems(str(xml_path), measures_per_system=mps)
+            mps_for_xml = _adjust_mps_for_xml(mps, str(xml_path))
+            finale = xml_to_systems(str(xml_path), measures_per_system=mps_for_xml)
             pairs  = pair_systems(textbook, finale)
 
             sys_measure_data, xml_total, mps_total, is_acc_xml = _detect_pitch_errors(
