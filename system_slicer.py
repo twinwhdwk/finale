@@ -62,6 +62,28 @@ class PairedSystem:
 
 # ── 공통 슬라이서 ────────────────────────────────────────────────────
 
+def _group_staves(
+    staves: list[tuple[int, int]],
+    img_gray: "np.ndarray | None" = None,
+) -> list[list[tuple[int, int]]]:
+    """오선을 시스템 단위로 묶는다 (그랜드 스태프 / 다성부 대응).
+
+    y-gap 기반: 직전 오선과의 수직 간격이 staff_h의 2배 이내면 같은 시스템.
+    """
+    if not staves:
+        return []
+    groups: list[list[tuple[int, int]]] = [[staves[0]]]
+    for staff in staves[1:]:
+        prev_top, prev_bot = groups[-1][-1]
+        staff_h = max(1, prev_bot - prev_top)
+        y_gap   = staff[0] - prev_bot
+        if y_gap < staff_h * 2.0:
+            groups[-1].append(staff)
+        else:
+            groups.append([staff])
+    return groups
+
+
 def _slice_img(
     img_rgb: np.ndarray,
     page_num: int,
@@ -77,16 +99,21 @@ def _slice_img(
         result.warnings.append(f"page/img {page_num + 1}: 오선 미감지 — 건너뜀")
         return abs_system
 
-    for staff_idx, (top_y, bot_y) in enumerate(staves, start=1):
-        staff_h = bot_y - top_y
+    systems = _group_staves(staves)
 
-        # 마디선 감지 → 마디 수 (len(barlines) = 실제 마디 수)
-        barlines      = _detect_barlines(img_gray, top_y, bot_y)
+    for sys_idx, sys_staves in enumerate(systems):
+        top_y = sys_staves[0][0]   # 첫 오선 상단
+        bot_y = sys_staves[-1][1]  # 마지막 오선 하단
+        staff_h = sys_staves[0][1] - sys_staves[0][0]  # 첫 오선 높이 기준
+
+        # 마디선 감지는 첫 번째(트레블) 오선 기준
+        barlines      = _detect_barlines(img_gray, top_y, sys_staves[0][1])
         measure_count = len(barlines)
 
-        next_top = staves[staff_idx][0] if staff_idx < len(staves) else page_h
+        next_sys_top = systems[sys_idx + 1][0][0] if sys_idx + 1 < len(systems) else page_h
         y0 = max(0, top_y - int(staff_h * _PAD_TOP))
-        y1 = min(next_top - 4, bot_y + int(staff_h * _PAD_BOT))
+        y1 = min(next_sys_top - 4, bot_y + int(staff_h * _PAD_BOT))
+        staff_idx = sys_idx + 1
 
         if y1 <= y0:
             result.warnings.append(

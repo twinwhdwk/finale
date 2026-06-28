@@ -142,7 +142,7 @@ header .sub {{ font-size: .78em; opacity: .75; margin-top: 3px; }}
                font-size: .8em; font-weight: 600;
                display: flex; justify-content: space-between; }}
 .panel img {{ display: block; width: 100%;
-             height: var(--panel-h, 280px); object-fit: contain;
+             height: 120px; object-fit: contain;
              background: #fafafa; padding: 6px 0; }}
 .panel .missing {{ padding: 40px; text-align: center; background: #ffebee;
                   color: #c62828; font-style: italic; font-size: .9em; }}
@@ -218,8 +218,7 @@ header .sub {{ font-size: .78em; opacity: .75; margin-top: 3px; }}
     <button onclick="prev()">◀ 이전</button>
     <span class="counter" id="counter">1 / {total}</span>
     <button onclick="next()">다음 ▶</button>
-    <label>높이 <input type="range" id="hslider" min="120" max="600" value="280"
-           oninput="setH(this.value)"> <span id="hlabel">280px</span></label>
+
     <button onclick="exportJson()">JSON 저장</button>
   </div>
 </header>
@@ -239,8 +238,7 @@ header .sub {{ font-size: .78em; opacity: .75; margin-top: 3px; }}
     '<div class="legend-item"><div class="legend-swatch det-imbalance" style="border-color:#fff176"></div>개수 불균형</div>'
     '<div class="legend-item"><div class="legend-swatch det-rhythm" style="border-color:#ce93d8"></div>음가 불일치</div>'
     '<div class="legend-item"><div class="legend-swatch det-miss" style="border-color:#bdbdbd"></div>감지 실패</div>'
-    '<div class="legend-item"><div class="legend-swatch det-excl"></div>제외(첫마디)</div>'
-    '</div>'
+        '</div>'
   if has_measures else ''}
 
   <!-- 카드 뷰 -->
@@ -304,10 +302,7 @@ const TOTAL = {total};
 let idx      = 0;
 let verdicts = load();
 
-function setH(v) {{
-  document.documentElement.style.setProperty('--panel-h', v + 'px');
-  document.getElementById('hlabel').textContent = v + 'px';
-}}
+
 
 function load() {{
   try {{ return JSON.parse(localStorage.getItem(KEY) || '{{}}'); }}
@@ -327,8 +322,7 @@ function renderMeasureTable(measures) {{
   let html = '<div class="m-table-wrap"><table class="m-table"><thead><tr>';
   html += '<th class="m-row-label"></th>';
   for (const m of measures) {{
-    const excl = m.excluded ? ' style="opacity:.5"' : '';
-    html += `<th class="${{m.cls}}"${{excl}}>마디 ${{m.num}}</th>`;
+    html += `<th class="${{m.cls}}">마디 ${{m.num}}</th>`;
   }}
   html += '</tr></thead><tbody>';
 
@@ -355,35 +349,27 @@ function renderMeasureTable(measures) {{
   // 원본 음표 행 (XML)
   html += '<tr><td class="m-row-label">원본</td>';
   for (const m of measures) {{
-    if (m.excluded) {{
-      html += `<td class="${{m.cls}}"><span class="note-ok">—</span></td>`;
-    }} else {{
-      const xmlNotes = (m.xml_notes || []).map((n, i) => {{
-        const isMissing = (m.missing || []).includes(n);
-        const isHollow  = m.xml_hollow && m.xml_hollow[i];
-        return noteSpan(n, false, isMissing, isHollow);
-      }});
-      html += `<td class="${{m.cls}}">${{xmlNotes.join(' ') || '—'}}</td>`;
-    }}
+    const xmlNotes = (m.xml_notes || []).map((n, i) => {{
+      const isMissing = (m.missing || []).includes(n);
+      const isHollow  = m.xml_hollow && m.xml_hollow[i];
+      return noteSpan(n, false, isMissing, isHollow);
+    }});
+    html += `<td class="${{m.cls}}">${{xmlNotes.join(' ') || '—'}}</td>`;
   }}
   html += '</tr>';
 
   // 감지 음표 행 (Det)
   html += '<tr><td class="m-row-label">감지</td>';
   for (const m of measures) {{
-    if (m.excluded) {{
-      html += `<td class="${{m.cls}}"><span class="note-ok">제외</span></td>`;
-    }} else {{
-      const detNotes = (m.det_notes || []).map((n, i) => {{
-        const isExtra  = (m.extra || []).includes(n);
-        const isHollow = m.det_hollow && m.det_hollow[i];
-        return noteSpan(n, isExtra, false, isHollow);
-      }});
-      let tieHtml = '';
-      if (m.tie_issue === 'pdf_extra') tieHtml = ' <span class="tie-pdf">⌒+</span>';
-      if (m.tie_issue === 'xml_extra') tieHtml = ' <span class="tie-xml">⌒?</span>';
-      html += `<td class="${{m.cls}}">${{detNotes.join(' ') || (m.cls === 'det-miss' ? '<em style="color:#999">없음</em>' : '—')}}${{tieHtml}}</td>`;
-    }}
+    const detNotes = (m.det_notes || []).map((n, i) => {{
+      const isExtra  = (m.extra || []).includes(n);
+      const isHollow = m.det_hollow && m.det_hollow[i];
+      return noteSpan(n, isExtra, false, isHollow);
+    }});
+    let tieHtml = '';
+    if (m.tie_issue === 'pdf_extra') tieHtml = ' <span class="tie-pdf">⌒+</span>';
+    if (m.tie_issue === 'xml_extra') tieHtml = ' <span class="tie-xml">⌒?</span>';
+    html += `<td class="${{m.cls}}">${{detNotes.join(' ') || (m.cls === 'det-miss' ? '<em style="color:#999">없음</em>' : '—')}}${{tieHtml}}</td>`;
   }}
   html += '</tr>';
 

@@ -179,10 +179,8 @@ def _diatonic_dist(p1: str, p2: str) -> int:
         return 99
 
 
-def _classify_measure(det, xml, det_hollow, xml_hollow, excluded):
+def _classify_measure(det, xml, det_hollow, xml_hollow, _excluded=False):
     """마디 하나의 비교 결과 분류. (cls, extra, missing)"""
-    if excluded:
-        return 'det-excl', [], []
     if not xml:
         return ('det-superset', list(det), []) if det else ('det-ok', [], [])
     if not det:
@@ -256,11 +254,13 @@ def _detect_pitch_errors(
     mps_total = sum(mps)
     sys_measure_data = []
 
-    # XML에 pickup 마디(measure 0)가 있으면 start_m=0으로 맞춤.
-    # PDF 바라인 감지가 pickup 바라인을 잡은 경우 첫 단 segment 0(excluded)이
-    # pickup에 대응하고, segment 1이 실제 마디 1에 대응한다.
+    # XML에 pickup 마디(measure 0)가 있으면 start_m=0으로 맞춤해
+    # XML 음표 조회 키를 정확히 유지한다.
+    # 표시 번호(display_num)는 항상 1부터 시작해 pickup = 마디1이 된다.
     has_pickup = bool(xml_notes.get(0))
-    start_m = 0 if has_pickup else 1
+    start_m     = 0 if has_pickup else 1
+    display_num = 1  # 전체 누산 표시 번호 (항상 1-based)
+
     for sys_idx, pair in enumerate(pairs):
         n_measures = mps[sys_idx] if sys_idx < len(mps) else 0
         sys_measures = []
@@ -281,19 +281,18 @@ def _detect_pitch_errors(
 
         # 마디별 분류
         for i in range(n_measures):
-            m_num    = start_m + i
-            excluded = (i == 0)
+            m_num = start_m + i
 
             det_p = det_pitches_per[i] if i < len(det_pitches_per) else []
             det_h = det_hollows_per[i] if i < len(det_hollows_per) else []
             xml_p = xml_notes.get(m_num, [])
             xml_h = xml_types.get(m_num, [])
 
-            cls, extra, missing = _classify_measure(det_p, xml_p, det_h, xml_h, excluded)
+            cls, extra, missing = _classify_measure(det_p, xml_p, det_h, xml_h, False)
 
             # arc/tie 이벤트 매핑
             tie_issue = ''
-            if not excluded and arc_events:
+            if arc_events:
                 ev = arc_events.get(i, {'start': 0, 'stop': 0, 'internal': 0})
                 from note_detector import compare_ties
                 issues = compare_ties({i: ev}, xml_ties, start_m)
@@ -304,7 +303,7 @@ def _detect_pitch_errors(
             lyric_str = ' / '.join(lyrics_list) if lyrics_list else ''
 
             sys_measures.append({
-                'num':       m_num,
+                'num':       display_num + i,
                 'cls':       cls,
                 'chord':     chord_str,
                 'lyric':     lyric_str,
@@ -315,11 +314,11 @@ def _detect_pitch_errors(
                 'extra':     list(extra),
                 'missing':   list(missing),
                 'tie_issue': tie_issue,
-                'excluded':  bool(excluded),
             })
 
         sys_measure_data.append(sys_measures)
-        start_m += n_measures
+        start_m     += n_measures
+        display_num += n_measures
 
     return sys_measure_data, xml_total, mps_total, is_acc
 

@@ -41,6 +41,31 @@ def _staff_gap_from_zone(zone) -> int:
     return max(1, (bot_y - top_y) // 4)
 
 
+def _group_zones_into_systems(zones: list, img_gray=None) -> list[list]:
+    """오선 목록을 시스템(그랜드 스태프 포함) 단위로 묶는다.
+
+    y-gap 기반: 직전 오선과의 수직 간격이 staff_h의 2배 이내면 같은 시스템.
+    - 그랜드 스태프(피아노 등): y-gap ≈ 0.3-0.5h → 같은 시스템
+    - 단성부 다음 시스템: y-gap ≈ 3-5h → 다른 시스템
+    반환값은 [[zone, ...], ...] 형태.
+    """
+    if not zones:
+        return []
+    groups: list[list] = [[zones[0]]]
+    for zone in zones[1:]:
+        prev = groups[-1][-1]
+        prev_top = prev[0] if isinstance(prev, tuple) else prev.top_y
+        prev_bot = prev[1] if isinstance(prev, tuple) else prev.bot_y
+        cur_top  = zone[0] if isinstance(zone, tuple) else zone.top_y
+        staff_h  = max(1, prev_bot - prev_top)
+        y_gap    = cur_top - prev_bot
+        if y_gap < staff_h * 2.0:
+            groups[-1].append(zone)
+        else:
+            groups.append([zone])
+    return groups
+
+
 def convert_pdf_to_xml(
     pdf_path: str,
     output_dir: str,
@@ -99,6 +124,12 @@ def convert_pdf_to_xml(
     n_pages = len(doc)
     doc.close()
 
+    try:
+        from config_loader import get_part_index
+        part_index = get_part_index()
+    except ImportError:
+        part_index = 0
+
     print(f"[OpenCV OMR 시작] {pdf_path.name} ({n_pages}페이지)")
     result_paths: list[str] = []
 
@@ -113,6 +144,7 @@ def convert_pdf_to_xml(
                 time_sig=time_sig,
                 clef_type=clef_type,
                 key_sig=key_sig,
+                part_index=part_index,
             )
             result_paths.append(xml_path)
         except Exception as e:
@@ -130,6 +162,7 @@ def _process_page(
     time_sig: str,
     clef_type: str,
     key_sig: int = 0,
+    part_index: int = 0,
 ) -> str:
     """단일 페이지를 처리해 .musicxml로 저장하고 경로를 반환한다."""
     from pdf_parser import _pdf_page_to_np, _detect_staves
@@ -144,11 +177,20 @@ def _process_page(
     img_gray = _cv2.cvtColor(img_rgb, _cv2.COLOR_RGB2GRAY) if img_rgb.ndim == 3 else img_rgb
 
     # ── 오선 위치 검출 ──
-    zones = _detect_staves(img_gray)
-    if not zones:
+    all_zones = _detect_staves(img_gray)
+    if not all_zones:
         raise RuntimeError(f"페이지 {page_num + 1}: 오선을 감지하지 못했습니다")
 
-    print(f"    {len(zones)}개 오선 시스템 감지")
+    # 그랜드 스태프(트레블+베이스 2단 등) 시스템 감지 후 원하는 파트만 추출
+    # 바라인 x좌표 공유 여부로 같은 시스템 판단
+    systems = _group_zones_into_systems(all_zones, img_gray=img_gray)
+    staves_per_sys = max(len(s) for s in systems)
+    zones = [s[part_index] for s in systems if part_index < len(s)]
+    if staves_per_sys > 1:
+        print(f"    {len(all_zones)}개 오선 감지 → {len(systems)}개 시스템 "
+              f"({staves_per_sys}단/시스템), 파트 {part_index} 처리")
+    else:
+        print(f"    {len(zones)}개 오선 시스템 감지")
 
     from pdf_parser import _detect_barlines
     from note_recognition.xml_builder import notes_to_score
