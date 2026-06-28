@@ -84,7 +84,8 @@ def detect_header(
 
     clef     = _detect_clef(binary, top_y, bot_y, gap, clef_end)
     key_sig  = _detect_key_sig(binary, top_y, bot_y, gap, clef_end, key_end)
-    num, den = _detect_time_sig(img_gray, binary, top_y, bot_y, gap, key_end, ts_end)
+    # 박자표 탐색 시작: 클레프 바로 다음 (조표가 없으면 클레프 직후에 있음)
+    num, den = _detect_time_sig(img_gray, binary, top_y, bot_y, gap, clef_end, ts_end)
 
     return HeaderInfo(clef=clef, key_sig=key_sig, time_num=num, time_den=den)
 
@@ -184,8 +185,11 @@ def _detect_time_sig(
     """
     박자표 분자/분모 인식.
 
-    1차: Tesseract OCR (이미지 3× 확대, 숫자 whitelist)
-    2차: 블롭 형태 기반 폴백
+    탐색 전략:
+    1. [ts_start, ts_end] 내에서 박자표 크기의 블롭 쌍(상/하)을 먼저 찾아
+       실제 박자표 x 범위를 정밀하게 좁힌 뒤
+    2. 해당 영역에서 오선 제거 → Tesseract OCR
+    3. OCR 실패 시 블롭 형태 폴백
     """
     if ts_start >= ts_end:
         return 4, 4
@@ -195,50 +199,166 @@ def _detect_time_sig(
     if y0 >= y1:
         return 4, 4
 
-    gray_ts = img_gray[y0:y1, ts_start:ts_end]
-    bin_ts  = binary[y0:y1, ts_start:ts_end]
+    bin_full = binary[y0:y1, ts_start:ts_end]
+
+    # ── 박자표 블롭 위치 먼저 찾기 ───────────────────────────────────
+    ts_x0, ts_x1 = _locate_time_sig_blobs(bin_full, gap)
+    if ts_x0 is None:
+        return 4, 4  # 박자표가 없는 구간
+
+    abs_x0 = ts_start + ts_x0
+    abs_x1 = ts_start + ts_x1
+
+    # ── 오선 제거 후 OCR ─────────────────────────────────────────────
+    gray_ts = img_gray[y0:y1, abs_x0:abs_x1]
+    bin_ts  = binary  [y0:y1, abs_x0:abs_x1]
+
+    # 수평 연속 픽셀(오선 후보) 제거: 폭의 60% 이상 연속이면 오선
+    bin_no_lines = _erase_staff_lines(bin_ts, gap)
 
     if _TESS_OK:
-        result = _ocr_time_sig(gray_ts)
+        result = _ocr_time_sig_clean(gray_ts, bin_no_lines)
         if result:
             return result
 
-    return _blob_time_sig(bin_ts, gap)
+    return _blob_time_sig(bin_no_lines, gap)
 
 
-def _ocr_time_sig(gray_region: np.ndarray) -> tuple[int, int] | None:
-    """Tesseract로 박자표 숫자 인식."""
-    inv = cv2.bitwise_not(gray_region)
-    h, w = inv.shape
+def _locate_time_sig_blobs(
+    bin_region: np.ndarray,
+    gap: float,
+) -> tuple[int | None, int | None]:
+    """
+    박자표 영역에서 분자+분모에 해당하는 두 블롭의 x 범위를 반환.
+    박자표가 없으면 (None, None).
+    """
+    h, w = bin_region.shape
+    if h == 0 or w == 0:
+        return None, None
+
+    n, _, stats, _ = cv2.connectedComponentsWithStats(bin_region, connectivity=8)
+
+    top_cands, bot_cands = [], []
+    mid_y = h / 2.0
+
+    for i in range(1, n):
+        area = stats[i, cv2.CC_STAT_AREA]
+        bh   = stats[i, cv2.CC_STAT_HEIGHT]
+        bw   = stats[i, cv2.CC_STAT_WIDTH]
+        by   = stats[i, cv2.CC_STAT_TOP]
+        bx   = stats[i, cv2.CC_STAT_LEFT]
+        cy   = by + bh / 2.0
+
+        # 박자표 숫자 크기 필터 (gap 기반)
+        if area < gap * gap * 0.15:  continue
+        if bh   < gap * 0.5:         continue
+        if bh   > gap * 2.2:         continue
+        if bw   < gap * 0.2:         continue
+        if bw   > gap * 2.0:         continue
+        # 수평 줄(오선)이 아닌지: bw > bh * 3 이면 오선 가능성 높음
+        if bw > bh * 3.5:            continue
+
+        if cy < mid_y:
+            top_cands.append({'x': bx, 'r': bx + bw})
+        else:
+            bot_cands.append({'x': bx, 'r': bx + bw})
+
+    # 상/하 모두 있어야 박자표
+    if not top_cands or not bot_cands:
+        return None, None
+
+    x0 = min(c['x'] for c in top_cands + bot_cands)
+    x1 = max(c['r'] for c in top_cands + bot_cands)
+    # 여유 각 3px
+    return max(0, x0 - 3), min(w, x1 + 3)
+
+
+def _erase_staff_lines(bin_region: np.ndarray, gap: float) -> np.ndarray:
+    """
+    이진 이미지에서 오선(가로 연속 흰 픽셀)을 제거.
+    각 행에서 연속 흰 픽셀이 전체 폭의 50% 이상이면 오선으로 판단해 0으로.
+    """
+    result = bin_region.copy()
+    w = bin_region.shape[1]
+    threshold = w * 0.50
+    for row in range(result.shape[0]):
+        if np.sum(result[row] > 0) >= threshold:
+            result[row] = 0
+    return result
+
+
+def _ocr_time_sig_clean(
+    gray_region: np.ndarray,
+    bin_no_lines: np.ndarray,
+) -> tuple[int, int] | None:
+    """
+    오선 제거된 이진 이미지에서 상단(분자)/하단(분모) 숫자를 각각 OCR.
+    각 숫자를 개별 크롭 후 PSM 10(단일 문자) 모드로 인식.
+    """
+    h, w = bin_no_lines.shape
     if h == 0 or w == 0:
         return None
 
-    # 3× 확대 후 OTSU 이진화 (오선 포함 상태에서도 인식)
-    inv_big = cv2.resize(inv, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
-    _, thr = cv2.threshold(inv_big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    mid = h // 2
+    num = _ocr_single_digit(gray_region[:mid], bin_no_lines[:mid])
+    den = _ocr_single_digit(gray_region[mid:], bin_no_lines[mid:])
 
-    try:
-        cfg = '--psm 6 --oem 3 -c tessedit_char_whitelist=0123456789'
-        text = pytesseract.image_to_string(thr, config=cfg)
-        digits = [int(c) for c in text if c.isdigit()]
-    except Exception:
+    if num is None or den is None:
         return None
-
-    if len(digits) < 2:
-        return None
-
-    # 인접 쌍 중 유효한 박자표 찾기
-    for i in range(len(digits) - 1):
-        pair = (digits[i], digits[i + 1])
-        if pair in _COMMON_TIME_SIGS:
-            return pair
-
-    # 유효 범위 내 첫 두 숫자 반환
-    n, d = digits[0], digits[1]
-    if n in {2, 3, 4, 6, 9, 12} and d in {2, 4, 8, 16}:
-        return n, d
-
+    if num in {2, 3, 4, 6, 9, 12} and den in {2, 4, 8, 16}:
+        return num, den
     return None
+
+
+def _ocr_single_digit(gray_half: np.ndarray, bin_half: np.ndarray) -> int | None:
+    """반쪽(상/하) 영역에서 숫자 하나를 OCR. 여러 블롭이 있으면 두 자리 수."""
+    n_c, _, stats, _ = cv2.connectedComponentsWithStats(bin_half, connectivity=8)
+    blobs = sorted(
+        [stats[i] for i in range(1, n_c) if stats[i, cv2.CC_STAT_AREA] > 20],
+        key=lambda s: s[cv2.CC_STAT_LEFT],
+    )
+    if not blobs:
+        return None
+
+    digits_read: list[int] = []
+    for stat in blobs:
+        bx = stat[cv2.CC_STAT_LEFT]
+        by = stat[cv2.CC_STAT_TOP]
+        bw = stat[cv2.CC_STAT_WIDTH]
+        bh = stat[cv2.CC_STAT_HEIGHT]
+        if bw < 3 or bh < 3:
+            continue
+
+        # 블롭 크롭 + 여백 추가 후 3× 확대
+        pad = 4
+        y0c = max(0, by - pad)
+        y1c = min(gray_half.shape[0], by + bh + pad)
+        x0c = max(0, bx - pad)
+        x1c = min(gray_half.shape[1], bx + bw + pad)
+        crop = gray_half[y0c:y1c, x0c:x1c]
+        inv  = cv2.bitwise_not(crop)
+        big  = cv2.resize(inv, (inv.shape[1] * 4, inv.shape[0] * 4),
+                          interpolation=cv2.INTER_CUBIC)
+        _, thr = cv2.threshold(big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        try:
+            cfg = '--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789'
+            text = pytesseract.image_to_string(thr, config=cfg).strip()
+            d = [int(c) for c in text if c.isdigit()]
+            if d:
+                digits_read.extend(d)
+        except Exception:
+            pass
+
+    if not digits_read:
+        return None
+    if len(digits_read) == 1:
+        return digits_read[0]
+    # 두 자리 수 조합 (예: 1, 2 → 12)
+    result = 0
+    for d in digits_read:
+        result = result * 10 + d
+    return result
 
 
 def _blob_time_sig(region_bin: np.ndarray, gap: float) -> tuple[int, int]:
