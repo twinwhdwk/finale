@@ -103,6 +103,7 @@ def _detect_arcs_from_pdf(pdf_path: Path, dpi: int = 300) -> dict:
                 staff_gap=staff_gap,
                 line_thickness=line_thickness,
                 x_start=x_start,
+                barlines=barlines,
             )
             total_arcs  += len(result.arcs)
             total_notes += len(result.notes)

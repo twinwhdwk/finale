@@ -260,10 +260,23 @@ OCR 설정: Tesseract PSM 6, whitelist `ABCDEFGabcdefgmM#b1234567/`, 신뢰도 >
     `top_y - staff_h`로 클램프 (인접 오선 가사/코드 영역 겹침 방지).
   - 여전히 음표 단위 정밀 좌표는 없음 (마디 단위 bbox가 한계).
 
-- **이음줄(tie/slur) 인식 개선** — 1단계 완료:
-  1. ✅ `xml_comparator.py`에 `tie_missing`/`tie_extra` 비교 완료
-  2. ✅ `_detect_split_tie` 추가 완료
-  3. ⏸️ **보류**: homr 0.6.2가 타이를 MusicXML에 출력하지 않아 보류.
+- ✅ **이음줄(tie/slur) 인식 개선** — OpenCV 기반 구현 완료:
+  1. ✅ `xml_comparator.py`: `tie_missing`/`tie_extra` kind 추가, `_detect_split_tie`
+  2. ✅ `note_recognition/arc_detector.py`: Morphological Opening 기반 호 감지
+     (`ArcCandidate` 데이터클래스, cut_left/cut_right 시스템 경계 처리)
+  3. ✅ `note_recognition/xml_builder.py`: `_apply_arcs()` — 동음=붙임줄, 이음=이음줄
+  4. ✅ `tests/test_arc_detection.py`: 5곡 샘플 감지율 검증 (DPI=300)
+     - 최신 결과 (2026-06): DQ=49/49, kk=78/78, nc=40/40, oD=68/68, oF=50/50
+       **F1=100.0%** (세션 전 F1=89.8%→93.9%→96.3%→97.2%→97.9%→99.6%→99.8%→100%)
+       (감지율 = det_arcs/ref_total, ref_total=tie+slur 태그 전체 수; 물리 아크=ref_total/2)
+     - 주요 개선:
+       · note_filter y0/y1 끝점별 검사, x/y_tol=3*gap
+       · 수평 1px dilation(gap 16-75 스태프): kk FN 해결
+       · bw<77 좁은 슬러(gap≥18): y_tol=70px 완화 → kk 4 FN 추가 복구
+       · 스태프 하단 아래볼록 FP 제거 tiered 필터: DQ/nc/oD 100% 달성
+         (bw>110,cy_below>0.6g / bw>90,cy_below>0.7g / bw>79,cy_below>1.6g)
+     - 잔여 한계: 없음 (F1=100%)
+  5. ⏸️ homr 엔진 타이 출력은 보류 (GPU 미구축, homr 0.6.2 의도적 비활성화 상태)
 
 - **로컬 PDF 실측 후 튜닝 필요**:
   - `HEAD_FILL_THRESHOLD=0.47` — 실제 폰트에서 half→quarter 오분류 가능성 높음

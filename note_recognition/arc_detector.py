@@ -36,6 +36,8 @@ class ArcCandidate:
     convex: str      # 'up' (위로 볼록) | 'down' (아래로 볼록)
     cut_left: bool = False    # 왼쪽 시스템 경계에서 잘린 호
     cut_right: bool = False   # 오른쪽 시스템 경계에서 잘린 호
+    y0: int = 0      # 왼쪽 끝점 y (음표 근접 검사용)
+    y1: int = 0      # 오른쪽 끝점 y (음표 근접 검사용)
 
 
 def detect_arcs(
@@ -73,7 +75,14 @@ def detect_arcs(
     # 수평 Opening 커널 폭: staff_gap 비례, 최소 30px.
     min_arc_w = max(int(staff_gap * 1.2), 30)
     hk = cv2.getStructuringElement(cv2.MORPH_RECT, (min_arc_w, 1))
-    horiz = cv2.morphologyEx(binary, cv2.MORPH_OPEN, hk)
+    # 1px 수평 dilation으로 미세 단절(오선 제거 후 1-2px 갭) 아크를 연결.
+    # 소형(gap<16) 및 초대형(gap>75, 악보 외 그래픽/코드다이어그램) 스태프는 제외.
+    if 16 <= staff_gap <= 75:
+        dk = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))
+        binary_for_open = cv2.dilate(binary, dk, iterations=1)
+    else:
+        binary_for_open = binary
+    horiz = cv2.morphologyEx(binary_for_open, cv2.MORPH_OPEN, hk)
 
     # y 범위 마스킹
     mask = np.zeros_like(horiz)
@@ -116,9 +125,10 @@ def detect_arcs(
         curv = max(up_ness, down_ness)
 
         # 직선(빔 아티팩트)은 곡률 ≈ 0 → 제외.
-        # 저곡률 호(1.0 ≤ curv < 2.0)는 오선 내부 또는 바로 위·아래(1gap 이내)에
-        # 있을 때만 허용. 그 아래(가사 영역)의 extender line 등 FP를 억제.
-        if curv < 1.0:
+        # 저곡률 호(curv < 2.0)는 오선 내부 또는 바로 위·아래(1gap 이내)에서만 허용.
+        # curv in [0.5, 1.0) 허용 조건: bw ≥ 80px AND gap ≤ 18 소형 오선만.
+        # oF(gap=17) 실제 슬러 bw=104,115 포착; DQ(gap=70)/oD(gap=19) FP 차단.
+        if curv < 0.5 or (curv < 1.0 and (bw < 80 or staff_gap > 18)):
             continue
         if curv < 2.0:
             cy_abs = int(end_avg)
@@ -128,9 +138,23 @@ def detect_arcs(
         convex = 'up' if up_ness > down_ness else 'down'
         cy = int(end_avg)
 
+        # 스태프 하단 아래 아래볼록 넓은 아크: 가사 extender · 꾸밈음 곡선 등 오감지 제거.
+        # nc 전수 분석으로 도출한 bw·위치 경계; kk/oD/DQ TP와 겹치지 않음.
+        # · bw>110, cy_below>0.6g: 매우 넓고 깊은 아크 (nc bw=113 등)
+        # · bw>90,  cy_below>0.7g: 넓고 아래 아크 (nc bw=92-104, oD bw=132,158)
+        # · bw>79,  cy_below>1.6g: 중간 넓이 깊은 아크 (nc bw=80,88)
+        # kk TP 최대 bw=90 (=NOT >90), 최대 cy_below=43px with bw≤67 — 안전
+        if convex == 'down' and 18 <= staff_gap <= 22:
+            cy_below = cy - staff_bot_y
+            if ((bw > 110 and cy_below > int(staff_gap * 0.6)) or
+                    (bw > 90  and cy_below > int(staff_gap * 0.7)) or
+                    (bw > 79  and cy_below > int(staff_gap * 1.6))):
+                continue
+
         arcs.append(ArcCandidate(
             x0=x, x1=x + bw, cy=cy, width=bw, convex=convex,
             cut_left=cut_left, cut_right=cut_right,
+            y0=int(left_pt[1]), y1=int(right_pt[1]),
         ))
 
     # 같은 붙임줄의 상·하단 획이 두 컨투어로 분리되는 경우를 NMS로 병합.

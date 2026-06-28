@@ -437,6 +437,7 @@ def detect_notes(
     line_thickness: int,
     min_horizontal_run: int | None = None,
     x_start: int = 0,
+    barlines: list[int] | tuple[int, ...] = (),
 ) -> NoteDetectionResult:
     """
     오선 제거 → 연결성분 분리 → 음가 분류를 한 번에 수행.
@@ -535,6 +536,43 @@ def detect_notes(
         binary_for_arcs, staff_gap, staff_top_y, staff_bot_y,
         img_width=binary_for_arcs.shape[1],
     )
+
+    # 음표 위치 기반 아크 필터: 양 끝점 근방에 음표가 없으면 가사 extender 등 오감지.
+    # y0/y1(끝점별 y)로 검사하여 피치 변화 슬러에서도 정확하게 동작.
+    # 예외: cut 아크, x_start 미만 영역(음표 마스킹으로 미검출) 시작 아크.
+    if notes:
+        x_tol = staff_gap * 3
+        y_tol_base = staff_gap * 3   # 짧은 슬러 기본 y 허용 범위
+        filtered: list = []
+        for arc in arcs:
+            if arc.cut_left or arc.cut_right:
+                filtered.append(arc)
+                continue
+            # bw<77px 좁은 슬러(grace note 등): gap≥18 스태프에서만 y_tol=70으로 완화.
+            # gap<18(oD=14, oF=17 소형 스태프)에선 기준값 유지 → 소형 스태프 FP 방지.
+            y_tol = 70 if (arc.width < 77 and staff_gap >= 18) else y_tol_base
+            # x_start 미만 영역은 음표 마스킹 → 해당 끝점 면제.
+            # 마디선 직전(1gap 이내): 음표머리가 슬러에 흡수되어 미검출될 수 있음 → 오른쪽 면제.
+            # 이미지 우측 경계(89% 초과, _detect_barlines 제외 구간): 최종 마디선 끝점도 면제.
+            bar_tol = staff_gap
+            img_w = img_gray.shape[1]
+            right_near_bar = bool(barlines) and any(
+                abs(arc.x1 - bx) <= bar_tol for bx in barlines
+            )
+            right_near_edge = arc.x1 > int(img_w * 0.89) - 2 * staff_gap
+            left_exempt  = (arc.x0 < x_start)
+            right_exempt = (arc.x1 < x_start) or right_near_bar or right_near_edge
+            near_left   = left_exempt or any(
+                abs(n.head_x - arc.x0) <= x_tol and abs(n.head_y - arc.y0) <= y_tol
+                for n in notes
+            )
+            near_right  = right_exempt or any(
+                abs(n.head_x - arc.x1) <= x_tol and abs(n.head_y - arc.y1) <= y_tol
+                for n in notes
+            )
+            if near_left and near_right:
+                filtered.append(arc)
+        arcs = filtered
 
     return NoteDetectionResult(
         notes=notes,
