@@ -161,6 +161,24 @@ def _process_page(
     )
     print(f"    오선 두께={line_thickness}px, 간격≈{staff_gap_0}px")
 
+    # ── 헤더 자동 감지 (음자리표·조표·박자표) ──────────────────────────
+    # config.ini 값을 기본값으로 쓰되, 이미지에서 더 구체적인 정보가 감지되면 덮어씀.
+    from note_recognition.header_detector import detect_header
+    _h = first_bot - first_top
+    staff_ys_est = [first_top + round(_h * i / 4) for i in range(5)]
+    try:
+        hdr = detect_header(img_gray, staff_ys_est)
+        detected_clef   = 'treble' if hdr.clef == 'G' else 'bass'
+        detected_key    = hdr.key_sig
+        detected_tsig   = hdr.time_sig
+        print(f"    헤더 감지: {hdr}")
+        # config.ini 값이 명시적으로 넘어온 경우(기본값과 다른 경우)에만 우선 적용
+        if clef_type == 'treble':   clef_type = detected_clef
+        if key_sig   == 0:          key_sig   = detected_key
+        if time_sig  == '4/4':      time_sig  = detected_tsig
+    except Exception as e:
+        print(f"    [경고] 헤더 자동 감지 실패 ({e}), config.ini 값 사용")
+
     # ── 오선별 독립 처리 (각 오선 = 악보의 연속 구간) ──
     # 오선마다 바라인을 독립적으로 감지하고 notes_to_score로 마디를 생성한 뒤
     # 마디 번호를 이어붙여 전체 페이지를 하나의 Part로 조립한다.

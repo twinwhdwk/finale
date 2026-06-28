@@ -451,7 +451,9 @@ def _run_detection(
     if not barlines:
         barlines = [0, w]
 
-    left_margin = min(int(barlines[0] * 0.60), int(spacing * 10))
+    # spacing * 20 ≈ 600px (spacing≈30px @ 600dpi) — clef + 조표 + 박자표 전체 영역 커버.
+    # min으로 첫 마디 폭의 60%를 초과하지 않도록 제한.
+    left_margin = min(int(barlines[0] * 0.60), int(spacing * 20))
 
     # 호 감지 (Opening 이전)
     arc_y_min = int(top_y - 2.5 * spacing)
@@ -514,6 +516,27 @@ def _run_detection(
 
 
 # ── 공개 API ─────────────────────────────────────────────────────────
+
+def detect_header_from_png(png_bytes: bytes):
+    """
+    단(System) PNG → HeaderInfo (음자리표·조표·박자표 자동 감지).
+
+    Returns:
+        note_recognition.header_detector.HeaderInfo
+    """
+    from note_recognition.header_detector import detect_header, HeaderInfo
+
+    arr = np.frombuffer(png_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return HeaderInfo()
+
+    staves = _detect_staff_lines(img)
+    if not staves:
+        return HeaderInfo()
+
+    return detect_header(img, staves[0])
+
 
 def detect_notes_and_ties_from_png(
     png_bytes: bytes,
@@ -583,7 +606,9 @@ def detect_arcs_debug_png(
     if not barlines:
         barlines = [0, w]
 
-    left_margin = min(int(barlines[0] * 0.60), int(spacing * 10))
+    # spacing * 20 ≈ 600px (spacing≈30px @ 600dpi) — clef + 조표 + 박자표 전체 영역 커버.
+    # min으로 첫 마디 폭의 60%를 초과하지 않도록 제한.
+    left_margin = min(int(barlines[0] * 0.60), int(spacing * 20))
     arc_y_range = (int(top_y - 2.5 * spacing), int(bot_y + 2.5 * spacing))
     arcs = _detect_arcs(binary_clean, spacing, left_margin=left_margin, y_range=arc_y_range)
 
