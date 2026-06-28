@@ -76,16 +76,37 @@ def detect_header(
     bot_y = int(staff_ys[-1])
     w_img = img_gray.shape[1]
 
-    # 헤더 존 경계 (gap 기반 — DPI가 달라도 비율 유지)
-    # 클레프: 0 ~ 5.5gap  /  조표: ~10gap  /  박자표: ~14gap
-    clef_end = min(int(gap * 5.5),  w_img // 4)
-    key_end  = min(int(gap * 10.0), w_img // 4)
-    ts_end   = min(int(gap * 14.0), w_img // 4)
+    # 헤더 시작 x: 오선 영역에서 첫 dark 픽셀 열 (PDF 좌측 여백 건너뜀)
+    y0_staff = max(0, top_y - int(gap))
+    y1_staff = min(binary.shape[0], bot_y + int(gap))
+    col_sum  = np.sum(binary[y0_staff:y1_staff, :] > 0, axis=0)
+    nonzero  = np.nonzero(col_sum)[0]
+    x_start  = int(nonzero[0]) if len(nonzero) else 0
 
-    clef     = _detect_clef(binary, top_y, bot_y, gap, clef_end)
-    key_sig  = _detect_key_sig(binary, top_y, bot_y, gap, clef_end, key_end)
+    # 헤더 존 경계 (x_start 기준 gap 배수)
+    clef_end = min(x_start + int(gap * 5.5),  w_img // 4 * 3)
+    key_end  = min(x_start + int(gap * 10.0), w_img // 4 * 3)
+    ts_end   = min(x_start + int(gap * 14.0), w_img // 4 * 3)
+
+    clef     = _detect_clef(binary, top_y, bot_y, gap, x_start, clef_end)
+
+    # ── 박자표 x 위치를 먼저 파악해 조표 존 경계 결정 ───────────────────────
+    # _locate_time_sig_blobs: 분자+분모 쌍이 있어야 ts로 인정
+    #   → 조표 기호(샵/플랫)는 오선 상하 쌍이 없으므로 무시됨
+    ts_start_approx = x_start + int(gap * 5.0)
+    y0_ts = max(0, top_y)
+    y1_ts = min(binary.shape[0] - 1, bot_y)
+    bin_ts_zone = binary[y0_ts:y1_ts, ts_start_approx:ts_end]
+    ts_x0_rel, _ = _locate_time_sig_blobs(bin_ts_zone, gap)
+    if ts_x0_rel is not None:
+        abs_ts_x0 = ts_start_approx + ts_x0_rel
+        key_end_actual = max(clef_end + 1, abs_ts_x0 - int(gap * 0.3))
+    else:
+        key_end_actual = key_end  # fallback
+
+    key_sig  = _detect_key_sig(binary, top_y, bot_y, gap, clef_end, key_end_actual)
     # 박자표 탐색 시작: 클레프 바로 다음 (조표가 없으면 클레프 직후에 있음)
-    num, den = _detect_time_sig(img_gray, binary, top_y, bot_y, gap, clef_end, ts_end)
+    num, den = _detect_time_sig(img_gray, binary, top_y, bot_y, gap, x_start + int(gap * 5.0), ts_end)
 
     return HeaderInfo(clef=clef, key_sig=key_sig, time_num=num, time_den=den)
 
@@ -96,6 +117,7 @@ def _detect_clef(
     binary: np.ndarray,
     top_y: int, bot_y: int,
     gap: float,
+    clef_start: int,
     clef_end: int,
 ) -> str:
     """
@@ -105,7 +127,7 @@ def _detect_clef(
     y0 = max(0, top_y - int(gap * 1.5))
     y1 = min(binary.shape[0] - 1, bot_y + int(gap * 2.5))
 
-    region = binary[y0:y1, :clef_end]
+    region = binary[y0:y1, clef_start:clef_end]
     if region.size == 0:
         return 'G'
 
@@ -131,10 +153,13 @@ def _detect_key_sig(
     key_start: int, key_end: int,
 ) -> int:
     """
-    조표 블롭 카운팅.
+    조표 개수 + 샵/플랫 구분.
 
-    샵(#): 종횡비(bw/bh) ≥ 0.55, 격자형 획
-    플랫(b): 종횡비 < 0.55, 세로로 긴 형태
+    전략:
+    1. 오선 제거 후 열(column) 투영으로 기호 위치 그룹 수 산출 → 개수
+    2. 플랫(b) 판별: 오선 제거 후 '근정방형(nearly-square)' 블롭이 존재하면 플랫.
+       플랫의 둥근 머리는 bw/bh ≈ 0.8~1.8, bh > 0.35gap.
+       샵(#)은 오선 제거 후 가느다란 세로/가로 파편만 남으므로 해당 블롭 없음.
     """
     if key_start >= key_end:
         return 0
@@ -145,32 +170,78 @@ def _detect_key_sig(
     if region.size == 0:
         return 0
 
-    n, _, stats, centroids = cv2.connectedComponentsWithStats(region, connectivity=8)
-    if n < 2:
+    # 오선 제거 후 열 투영
+    region_no = _erase_staff_lines_ratio(region, 0.35)
+    col_sum = np.sum(region_no > 0, axis=0).astype(float)
+    if col_sum.max() == 0:
         return 0
 
-    valid: list[dict] = []
-    for i in range(1, n):
-        area = stats[i, cv2.CC_STAT_AREA]
-        bh   = stats[i, cv2.CC_STAT_HEIGHT]
-        bw   = stats[i, cv2.CC_STAT_WIDTH]
+    # ── 연속 활성 구간(run) 목록 ──────────────────────────────────────────
+    thresh = gap * 0.25
+    active_cols = col_sum >= thresh
+    runs: list[tuple[int, int]] = []
+    in_run = False; rs = 0
+    for c in range(len(active_cols)):
+        if active_cols[c] and not in_run:
+            in_run = True; rs = c
+        elif not active_cols[c] and in_run:
+            in_run = False; runs.append((rs, c))
+    if in_run:
+        runs.append((rs, len(active_cols)))
 
-        if area < gap * gap * 0.4:  continue
-        if area > gap * gap * 5.0:  continue
-        if bh   < gap * 0.8:        continue
-        if bh   > gap * 3.5:        continue
-        if bw   > gap * 2.0:        continue
-
-        valid.append({'bw': bw, 'bh': bh})
-
-    if not valid:
+    if not runs:
         return 0
 
-    count = len(valid)
-    avg_aspect = sum(v['bw'] / max(v['bh'], 1) for v in valid) / count
+    # ── 박자표 경계 찾기: ~1.0gap 이상의 큰 갭 = 조표/박자표 경계 ──────────
+    LARGE_GAP = gap * 1.0
+    key_runs: list[tuple[int, int]] = [runs[0]]
+    excluded_run: tuple[int, int] | None = None
+    for i in range(1, len(runs)):
+        g = runs[i][0] - key_runs[-1][1]
+        if g >= LARGE_GAP:
+            excluded_run = runs[i]
+            break
+        key_runs.append(runs[i])
 
-    # 샵: aspect ≥ 0.55  /  플랫: aspect < 0.55
-    return count if avg_aspect >= 0.55 else -count
+    # ── 샵/플랫 구분: key_runs 내 '키 tall-narrow 블롭' ──────────────────
+    # 샵 세로선: bh ≈ gap (오선간격 높이), bw < 0.35*gap (가느다란 수직선)
+    # 플랫 클레프블리드 아티팩트: bh < 0.6*gap (짧음) — 식별 불가 기호
+    x0_k = key_runs[0][0]
+    x1_k = key_runs[-1][1]
+    nc, _, stats2, _ = cv2.connectedComponentsWithStats(
+        region_no[:, x0_k:x1_k], connectivity=8)
+    has_sharp_bar = False
+    for i in range(1, nc):
+        bh2 = stats2[i, cv2.CC_STAT_HEIGHT]
+        bw2 = stats2[i, cv2.CC_STAT_WIDTH]
+        if bh2 > gap * 0.6 and bw2 < gap * 0.35:
+            has_sharp_bar = True
+            break
+
+    if has_sharp_bar:
+        # ── 샵: 조표 span 기준 개수 산출 ─────────────────────────────────
+        span = x1_k - x0_k
+        n_sharps = max(1, round(span / (gap * 0.80)))
+        return n_sharps
+    else:
+        # ── 플랫: excluded_run 폭으로 개수 추정 ───────────────────────────
+        # 플랫+박자표가 merged run 1개로 들어옴; 박자표 폭(~0.65*gap) 빼고 플랫만 계산
+        if excluded_run is None:
+            return 0
+        excl_w = excluded_run[1] - excluded_run[0]
+        n_flats = max(1, round(excl_w / (gap * 1.7)))
+        return -n_flats
+
+
+def _erase_staff_lines_ratio(bin_region: np.ndarray, ratio: float) -> np.ndarray:
+    """각 행에서 활성 픽셀이 폭 × ratio 이상이면 오선으로 판단해 제거."""
+    result = bin_region.copy()
+    w = bin_region.shape[1]
+    threshold = w * ratio
+    for row in range(result.shape[0]):
+        if np.sum(result[row] > 0) >= threshold:
+            result[row] = 0
+    return result
 
 
 # ── 박자표 감지 ───────────────────────────────────────────────────────
