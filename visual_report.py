@@ -481,3 +481,160 @@ render();
 
     Path(output_path).write_text(html, encoding="utf-8")
     print(f"\n[시각 비교 뷰어 저장] {output_path}")
+
+
+def save_visual_index_html(
+    entries: list[dict],
+    output_path: str,
+    title: str = "악보 시각 비교 인덱스",
+) -> None:
+    """
+    batch-visual 결과 인덱스 HTML을 생성합니다.
+
+    entries 항목:
+      stem    str   — 파일 스템(곡명)
+      html    str|None — 생성된 HTML 파일명 (None이면 오류/스킵)
+      systems int|str  — 단 수
+      error   str|None — 오류 메시지 (None이면 성공/스킵)
+    """
+    now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total = len(entries)
+    ok    = sum(1 for e in entries if e["html"] and not e["error"])
+    err   = sum(1 for e in entries if e["error"] and e["error"] != "XML 없음")
+    skip  = sum(1 for e in entries if e["error"] == "XML 없음")
+
+    rows = []
+    for i, e in enumerate(entries, 1):
+        stem    = e["stem"]
+        html    = e.get("html")
+        systems = e.get("systems", 0)
+        error   = e.get("error")
+
+        if error == "XML 없음":
+            status = '<span class="st-skip">XML 없음</span>'
+            link   = "—"
+        elif error:
+            status = f'<span class="st-err" title="{error}">오류</span>'
+            link   = "—"
+        elif html:
+            status = '<span class="st-ok">완료</span>'
+            link   = f'<a href="{html}" target="_blank">열기 ↗</a>'
+        else:
+            status = '<span class="st-skip">스킵</span>'
+            link   = "—"
+
+        sys_disp = str(systems) if systems else "—"
+        rows.append(
+            f'<tr data-stem="{stem.lower()}">'
+            f'<td class="td-num">{i}</td>'
+            f'<td class="td-name">{stem}</td>'
+            f'<td class="td-sys">{sys_disp}</td>'
+            f'<td>{status}</td>'
+            f'<td>{link}</td>'
+            f'</tr>'
+        )
+
+    rows_html = "\n".join(rows)
+
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>{title}</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+       background: #f0f2f5; color: #222; }}
+header {{ background: #1a237e; color: #fff; padding: 14px 28px; }}
+header h1 {{ font-size: 1.2em; font-weight: 700; }}
+header .sub {{ font-size: .78em; opacity: .75; margin-top: 3px; }}
+
+.stats {{ display: flex; gap: 28px; padding: 18px 28px;
+         background: #fff; border-bottom: 1px solid #e0e0e0; }}
+.stat-item {{ text-align: center; }}
+.stat-item .n {{ font-size: 2em; font-weight: 700; line-height: 1.1; }}
+.stat-item .l {{ font-size: .75em; color: #777; }}
+.n-ok   {{ color: #2e7d32; }}
+.n-err  {{ color: #c62828; }}
+.n-skip {{ color: #9e9e9e; }}
+.n-total {{ color: #1a237e; }}
+
+.filter-wrap {{ padding: 14px 28px; background: #fff; border-bottom: 1px solid #e0e0e0; }}
+.filter-wrap input {{ width: 100%; max-width: 480px; padding: 8px 14px;
+                      border: 1.5px solid #c5cae9; border-radius: 6px;
+                      font-size: .9em; outline: none; }}
+.filter-wrap input:focus {{ border-color: #3949ab; }}
+
+.table-wrap {{ padding: 20px 28px; }}
+table {{ border-collapse: collapse; width: 100%; background: #fff;
+        border-radius: 10px; overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,.07); }}
+th {{ background: #283593; color: #fff; padding: 10px 14px;
+     font-size: .8em; text-align: left; }}
+td {{ padding: 8px 14px; border-bottom: 1px solid #f0f0f0;
+     font-size: .82em; vertical-align: middle; }}
+tr:last-child td {{ border-bottom: none; }}
+tr:hover td {{ background: #f5f7ff; }}
+tr[style*="display:none"] {{ display: none !important; }}
+
+.td-num  {{ color: #9e9e9e; width: 48px; text-align: right; }}
+.td-name {{ font-weight: 500; }}
+.td-sys  {{ width: 60px; text-align: center; color: #555; }}
+
+.st-ok   {{ color: #2e7d32; font-weight: 600; }}
+.st-err  {{ color: #c62828; font-weight: 600; cursor: help; }}
+.st-skip {{ color: #9e9e9e; }}
+
+a {{ color: #1a237e; font-weight: 600; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>{title}</h1>
+  <div class="sub">생성: {now} &nbsp;|&nbsp; 총 {total}곡</div>
+</header>
+
+<div class="stats">
+  <div class="stat-item"><div class="n n-total">{total}</div><div class="l">전체</div></div>
+  <div class="stat-item"><div class="n n-ok">{ok}</div><div class="l">완료</div></div>
+  <div class="stat-item"><div class="n n-err">{err}</div><div class="l">오류</div></div>
+  <div class="stat-item"><div class="n n-skip">{skip}</div><div class="l">XML 없음</div></div>
+</div>
+
+<div class="filter-wrap">
+  <input type="text" id="filter" placeholder="곡명 검색…" oninput="filterRows(this.value)">
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="td-num">#</th>
+        <th>곡명</th>
+        <th class="td-sys">단</th>
+        <th style="width:80px">상태</th>
+        <th style="width:80px">링크</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+{rows_html}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function filterRows(q) {{
+  q = q.toLowerCase();
+  document.querySelectorAll('#tbody tr').forEach(tr => {{
+    tr.style.display = tr.dataset.stem.includes(q) ? '' : 'none';
+  }});
+}}
+</script>
+</body>
+</html>
+"""
+
+    Path(output_path).write_text(html, encoding="utf-8")
+    print(f"[인덱스 저장] {output_path}")

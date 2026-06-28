@@ -290,7 +290,7 @@ def _detect_pitch_errors(
             # arc/tie 이벤트 매핑
             tie_issue = ''
             if not excluded and arc_events:
-                ev = arc_events.get(i, {})
+                ev = arc_events.get(i, {'start': 0, 'stop': 0, 'internal': 0})
                 from note_detector import compare_ties
                 issues = compare_ties({i: ev}, xml_ties, start_m)
                 tie_issue = issues.get(m_num, '')
@@ -557,6 +557,90 @@ def cmd_visual(args):
         mps_total=sum(mps),
         is_acc_xml=is_acc_xml,
     )
+
+    import webbrowser
+    webbrowser.open(html_path.as_uri())
+
+
+# ── batch-visual (전체 PDF-XML 쌍 시각 비교 HTML 일괄 생성) ─────────
+
+def cmd_batch_visual(args):
+    """모든 PDF-XML 쌍에 대해 단(System) 단위 시각 비교 HTML을 일괄 생성합니다."""
+    import webbrowser
+    from system_slicer import pair_systems, slice_pdf_to_systems
+    from visual_report import save_visual_html, save_visual_index_html
+    from xml_to_systems import xml_to_systems
+
+    paths   = config_loader.get_paths()
+    pdf_dir = Path(paths["pdf_dir"])
+    xml_dir = Path(paths["xml_dir"])
+    dpi     = args.dpi
+    out_dir = Path(args.output_dir or paths["report_dir"]) / "visual"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    _check_dir(pdf_dir, "pdf_dir")
+    _check_dir(xml_dir, "xml_dir")
+
+    pdf_files = sorted(pdf_dir.glob("*.pdf"))
+    if args.name:
+        pdf_files = [p for p in pdf_files if args.name in p.stem]
+    if not pdf_files:
+        print("해당하는 PDF 파일이 없습니다.")
+        return
+
+    entries = []
+    total   = len(pdf_files)
+
+    for i, pdf in enumerate(pdf_files, 1):
+        stem      = pdf.stem
+        xml_path  = _find_orig_xml(xml_dir, stem)
+        html_path = out_dir / f"{stem}_visual.html"
+
+        if xml_path is None:
+            print(f"[{i}/{total}] 건너뜀 (XML 없음): {stem}")
+            entries.append({"stem": stem, "html": None, "systems": 0, "error": "XML 없음"})
+            continue
+
+        if not args.force and html_path.exists():
+            print(f"[{i}/{total}] 이미 존재, 건너뜀 (--force로 재생성): {stem}")
+            entries.append({"stem": stem, "html": html_path.name, "systems": "?", "error": None})
+            continue
+
+        print(f"\n[{i}/{total}] {stem}")
+        try:
+            textbook = slice_pdf_to_systems(str(pdf), dpi=dpi)
+            mps      = textbook.measures_per_system
+            print(f"  교과서: {textbook.total_systems}단, 단별 마디 수: {mps}")
+
+            finale = xml_to_systems(str(xml_path), measures_per_system=mps)
+            pairs  = pair_systems(textbook, finale)
+
+            sys_measure_data, xml_total, mps_total, is_acc_xml = _detect_pitch_errors(
+                pairs, str(xml_path), mps
+            )
+
+            save_visual_html(
+                pairs, textbook, finale, str(html_path),
+                title=stem,
+                sys_measure_data=sys_measure_data,
+                xml_total=xml_total,
+                mps_total=sum(mps),
+                is_acc_xml=is_acc_xml,
+            )
+            entries.append({
+                "stem":    stem,
+                "html":    html_path.name,
+                "systems": textbook.total_systems,
+                "error":   None,
+            })
+        except Exception as e:
+            print(f"  오류: {e}")
+            entries.append({"stem": stem, "html": None, "systems": 0, "error": str(e)})
+
+    index_path = out_dir / "index.html"
+    save_visual_index_html(entries, str(index_path))
+    print(f"\n인덱스 저장: {index_path}")
+    webbrowser.open(index_path.as_uri())
 
 
 # ── batch (전체 PDF-XML 쌍 음표 통계) ────────────────────────────────
@@ -856,6 +940,17 @@ def main():
     p_vis.add_argument("--dump-slices", action="store_true",
                        help="단 PNG를 개별 파일로도 저장 (디버깅)")
     p_vis.set_defaults(func=cmd_visual)
+
+    # batch-visual
+    p_bvis = sub.add_parser(
+        "batch-visual",
+        help="모든 PDF-XML 쌍을 단 단위로 시각 비교 → HTML 일괄 생성 + 인덱스"
+    )
+    p_bvis.add_argument("--name",       default=None, help="곡명 필터 (부분 문자열)")
+    p_bvis.add_argument("--dpi",        type=int, default=600, help="렌더 해상도 (기본 600)")
+    p_bvis.add_argument("--output-dir", default=None, help="출력 폴더 (기본: report_dir/visual/)")
+    p_bvis.add_argument("--force",      action="store_true", help="이미 존재하는 HTML도 재생성")
+    p_bvis.set_defaults(func=cmd_batch_visual)
 
     args = parser.parse_args()
     args.func(args)
