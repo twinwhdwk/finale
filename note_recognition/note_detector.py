@@ -183,6 +183,8 @@ def _classify_duration(
     notehead_radius: int,
     stem_up_hint: bool | None = None,
     stem_x_hint: int | None = None,
+    staff_top_y: int | None = None,
+    staff_bot_y: int | None = None,
 ) -> DetectedNote:
     """
     단일 연결성분(bbox)으로부터 음표 정보를 분류해 DetectedNote를 반환.
@@ -233,17 +235,41 @@ def _classify_duration(
     if stem_up_hint is not None:
         stem_up_guess = stem_up_hint
     else:
-        region_up   = binary[head_y_if_up - notehead_radius:   head_y_if_up   + notehead_radius, x:x+w]
-        region_down = binary[head_y_if_down - notehead_radius: head_y_if_down + notehead_radius, x:x+w]
-        density_up   = _pixel_density(region_up)
-        density_down = _pixel_density(region_down)
-        if abs(density_up - density_down) < 0.05:
-            stem_up_guess = True
+        # 투영(projection) 기반 판별:
+        #   세로 투영(vproj)으로 기둥 열 찾기 → 기둥 제외
+        #   가로 투영(hproj)으로 머리가 상단/하단 중 어디인지 판단
+        # density 비교보다 기둥 픽셀 혼재 영향을 덜 받아 안정적
+        region = binary[y:bot, x:x + w]
+        vproj = region.sum(axis=0) / 255           # 열별 픽셀 수
+        stem_mask = vproj > h * 0.5                # 높이 절반 이상 → 기둥
+        region_no_stem = region.copy()
+        stem_cols = np.where(stem_mask)[0]
+        if len(stem_cols) > 0:
+            region_no_stem[:, stem_cols] = 0       # 기둥 열 제거
+        hproj = region_no_stem.sum(axis=1) / 255  # 행별 픽셀 수 (기둥 제외)
+        top_mass = hproj[:h // 2].sum()
+        bot_mass = hproj[h // 2:].sum()
+
+        # 머리가 하단에 더 많으면 stem_up, 상단이면 stem_down
+        if abs(top_mass - bot_mass) < max(2.0, h * 0.1):
+            # 불분명할 때: 오선 기준 보조 판별
+            if staff_top_y is not None and staff_bot_y is not None:
+                up_in  = staff_top_y <= head_y_if_up   <= staff_bot_y
+                dn_in  = staff_top_y <= head_y_if_down <= staff_bot_y
+                if up_in and not dn_in:
+                    stem_up_guess = True
+                elif dn_in and not up_in:
+                    stem_up_guess = False
+                else:
+                    stem_up_guess = True  # 기본값
+            else:
+                stem_up_guess = True
         else:
-            stem_up_guess = (density_up >= density_down)
+            stem_up_guess = (bot_mass > top_mass)
 
     head_y = head_y_if_up if stem_up_guess else head_y_if_down
 
+    # head_x: stem_x_hint 우선, 없으면 기둥 위치에서 역산
     if stem_x_hint is not None:
         if stem_up_guess:
             head_x = stem_x_hint - (notehead_radius - 2)
@@ -251,24 +277,22 @@ def _classify_duration(
             head_x = stem_x_hint + (notehead_radius - 2)
         head_x = int(np.clip(head_x, x, x + w))
     else:
-        # 기둥 중간 행에서 실제 픽셀로 stem_x 탐색 → head_x 역산
-        # bbox 중심 추정은 깃발이 있는 eighth/sixteenth에서 ~6px 오차 발생
-        if stem_up_guess:
-            mid_y_s = int(np.clip((y + max(y, head_y - notehead_radius)) // 2,
-                                   0, binary.shape[0] - 1))
-        else:
-            mid_y_s = int(np.clip((min(bot, head_y + notehead_radius) + bot) // 2,
-                                   0, binary.shape[0] - 1))
-        row = binary[mid_y_s, x: x + w]
-        stem_pxs = [x + i for i, v in enumerate(row) if v > 0]
-        if stem_pxs:
+        # 기둥 열 찾기 → 반대편에 머리
+        region_hx = binary[y:bot, x:x + w]
+        vproj_hx = region_hx.sum(axis=0) / 255
+        stem_mask_hx = vproj_hx > h * 0.5
+        stem_cols_hx = np.where(stem_mask_hx)[0]
+        if len(stem_cols_hx) > 0:
+            stem_cx = float(np.mean(stem_cols_hx))   # 기둥 열 중심
             if stem_up_guess:
-                head_x = max(stem_pxs) - (notehead_radius - 2)
+                # stem_up: 기둥이 오른쪽 → 머리는 기둥 왼쪽
+                head_x = x + max(0, int(stem_cx) - notehead_radius)
             else:
-                head_x = min(stem_pxs) + (notehead_radius - 2)
-            head_x = int(np.clip(head_x, x, x + w))
+                # stem_down: 기둥이 왼쪽 → 머리는 기둥 오른쪽
+                head_x = x + min(w - 1, int(stem_cx) + notehead_radius)
         else:
-            head_x = x + w // 2  # fallback
+            head_x = x + w // 2
+        head_x = int(np.clip(head_x, x, x + w))
 
     # ── 3단계: 머리 밀도 → half vs (quarter/eighth/sixteenth) 구분 ──
     head_region = binary[
@@ -540,6 +564,8 @@ def detect_notes(
             binary_roi, bbox, notehead_radius,
             stem_up_hint=item["stem_up"],
             stem_x_hint=item["stem_x"],
+            staff_top_y=staff_top_y,
+            staff_bot_y=staff_bot_y,
         )
         notes.append(note)
 
