@@ -174,8 +174,15 @@ def _detect_staves(img_gray: np.ndarray) -> list[tuple[int, int]]:
         gaps = [five[j+1] - five[j] for j in range(4)]
         avg = np.mean(gaps)
         if max(gaps) < avg * 1.8:
-            staves.append((five[0], five[-1]))
-            i += 5
+            # ── 추가 검증: staff_gap이 현실적인 범위인지 확인 ──
+            # 300dpi 기준: gap 8~45px (실제 1.7~9.5mm)
+            # gap이 너무 크면 제목/텍스트 영역을 오선으로 잘못 감지한 것
+            staff_gap_est = avg
+            if 8 <= staff_gap_est <= 45:
+                staves.append((five[0], five[-1]))
+                i += 5
+            else:
+                i += 1
         else:
             i += 1
     return staves

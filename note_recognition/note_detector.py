@@ -496,9 +496,23 @@ def detect_notes(
     notes: list[DetectedNote] = []
     rests: list[DetectedRest] = []
 
+    # 오선 범위 밖 너무 먼 음표 제거 기준
+    # 실제 악보에서 덧줄은 보통 3개 이하 → step ±10 이내
+    # step > 10이면 코드 기호/텍스트 등 오인식 가능성 높음
+    MAX_STAFF_STEP = 10
+    line4_y_ref = staff_top_y + 4 * staff_gap  # step=0 기준 y
+
     for item in all_items:
         bbox = item["bbox"]
         bx, by, bw, bh = bbox
+
+        # pitch 범위 필터: 음표머리 y가 오선에서 너무 멀면 노이즈로 제거
+        # stem_up(기본)이면 머리가 bbox 하단, whole이면 bbox 중심
+        # 보수적으로 bbox 하단을 머리 위치로 추정 (stem_up 가정)
+        approx_head_y = by + bh - notehead_radius
+        approx_step = abs(round((line4_y_ref - approx_head_y) * 2 / staff_gap))
+        if approx_step > MAX_STAFF_STEP:
+            continue  # 오선 범위 밖 → 노이즈로 제거
 
         # 쉼표 판별 먼저 시도 (음표보다 h가 훨씬 작은 납작한 컴포넌트)
         rest = _classify_rest(bbox, staff_top_y, staff_gap)
