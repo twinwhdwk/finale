@@ -194,7 +194,7 @@ def _is_barline(w: int, h: int, notehead_radius: int) -> bool:
     마디선은 폭이 1~3px으로 매우 좁고, 오선 전체 높이보다 훨씬 길다.
     notehead_radius × 8 이상의 h + w < 6이면 마디선으로 본다.
     """
-    return w < 6 and h > notehead_radius * 8
+    return w < 6 and h >= notehead_radius * 8
 
 
 def split_all_beam_components(

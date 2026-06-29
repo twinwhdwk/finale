@@ -438,6 +438,7 @@ def detect_notes(
     min_horizontal_run: int | None = None,
     x_start: int = 0,
     barlines: list[int] | tuple[int, ...] = (),
+    next_staff_top_y: int | None = None,
 ) -> NoteDetectionResult:
     """
     오선 제거 → 연결성분 분리 → 음가 분류를 한 번에 수행.
@@ -476,10 +477,18 @@ def detect_notes(
 
     _, binary = cv2.threshold(removed, 128, 255, cv2.THRESH_BINARY_INV)
 
-    # y 범위: 오선 ± 기둥 길이 여유
-    margin = int(staff_gap * 3.5)
-    roi_top = max(0, staff_top_y - margin)
-    roi_bot = min(img_gray.shape[0], staff_bot_y + margin)
+    # y 범위: 음표 기둥 + 덧줄 여유
+    # 상단: stem_up 덧줄 기둥이 오선 위로 올라가므로 3.5×gap 여유 필요
+    # 하단: stem_down 기둥 끝까지 + 여유, 단 MAX_STAFF_STEP 필터로 극단 케이스 차단됨
+    #        2.5×gap으로 충분 (가사/코드 텍스트 제외 효과)
+    margin_top = int(staff_gap * 3.5)
+    margin_bot = int(staff_gap * 2.5)
+    roi_top = max(0, staff_top_y - margin_top)
+    if next_staff_top_y is not None:
+        max_bot = next_staff_top_y - int(staff_gap * 0.5)
+        roi_bot = min(img_gray.shape[0], min(staff_bot_y + margin_bot, max_bot))
+    else:
+        roi_bot = min(img_gray.shape[0], staff_bot_y + margin_bot)
     binary_roi = binary.copy()
     binary_roi[:roi_top, :] = 0
     binary_roi[roi_bot:, :] = 0

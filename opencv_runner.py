@@ -237,6 +237,10 @@ def _process_page(
             x_start = max(0, zone_barlines[0] - staff_gap * 3)
         else:
             x_start = img_gray.shape[1] // 10
+
+        # 다음 오선 top_y (ROI 하단 클램프용 — 가사/코드 기호 제외)
+        next_top = zones[zi + 1][0] if zi + 1 < len(zones) else None
+
         result = detect_notes(
             img_gray,
             staff_top_y=top_y,
@@ -244,6 +248,7 @@ def _process_page(
             staff_gap=staff_gap,
             line_thickness=line_thickness,
             x_start=x_start,
+            next_staff_top_y=next_top,
         )
         if not result.notes:
             continue
