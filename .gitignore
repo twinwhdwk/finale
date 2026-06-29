@@ -1,12 +1,17 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-reports/
 .pytest_cache/
-C:/
-C:\
+
+# 결과 파일
+reports/
 *.html
+images/
+
+# Windows 경로 (report_dir이 로컬 경로일 때)
+"C:\\*"
+C:\\*
+
+# 임시 파일
 /tmp/
-"C:\\Users\\*"
-Users/
-Desktop/
