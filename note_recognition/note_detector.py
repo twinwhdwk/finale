@@ -515,6 +515,13 @@ def detect_notes(
         bbox = item["bbox"]
         bx, by, bw, bh = bbox
 
+        # 텍스트/가사/코드 기호 필터
+        # 음표머리보다 훨씬 넓거나 낮은 컴포넌트 = 텍스트
+        if bw > 0 and bh > 0:
+            aspect = bw / bh
+            if aspect > 5 and bh < staff_gap:  # 가로로 극단적으로 넓고 얇음
+                continue
+
         # pitch 범위 필터: 음표머리 y가 오선에서 너무 멀면 노이즈로 제거
         # stem_up(기본)이면 머리가 bbox 하단, whole이면 bbox 중심
         # 보수적으로 bbox 하단을 머리 위치로 추정 (stem_up 가정)
