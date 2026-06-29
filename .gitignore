@@ -3,3 +3,7 @@ __pycache__/
 *.pyo
 reports/
 .pytest_cache/
+C:/
+C:\
+*.html
+/tmp/
