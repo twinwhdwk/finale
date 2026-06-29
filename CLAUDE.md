@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   음표 인식기.** 위 "입력 데이터 특성"(디지털 PDF, 2성부 이하, 중고등학생 수준)을
   적극 활용해, 범용 OMR이 아닌 좁은 도메인 특화 인식기를 새로 구축 중.
 
-  **진행 상황** — 파이프라인 완성, `pytest 134/134` 통과:
+  **진행 상황** — 파이프라인 완성, `pytest 139/139` 통과:
 
   1. ✅ **합성 테스트 이미지 생성기** (`tests/fixtures/synthetic_score.py`):
      `NoteSpec(x, staff_step, duration, stem_up, beam_to_next, dotted)` +
@@ -38,66 +38,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      `(img, note_gt, rest_gt)` 3-tuple 반환.
 
   2. ✅ **오선 제거** (`note_recognition/staff_removal.py`):
-     `detect_staff_line_thickness()` — run 시작점 기준 최빈값 측정
-     (버그 수정: 모든 y에서 재측정 시 두께 3→1 오판).
+     `detect_staff_line_thickness()` — run 시작점 기준 최빈값 측정.
      `remove_staff_lines()` — 가로 연속성 → 세로 두께 2단계 검증.
-     `tests/test_staff_removal.py` 8개 (다양한 gap=15~30px 포함).
+     `tests/test_staff_removal.py` 8개.
 
   3. ✅ **음표 검출 + 음가 분류** (`note_recognition/note_detector.py`):
      - 연결성분 분리 → 기둥 유무(h > staff_gap×2.5) → 머리 밀도
-       (HEAD_FILL_THRESHOLD=0.47) → 깃발 수(4-conn) 순서로 분류.
-     - 기둥 방향: bbox 상/하단 밀도 비교 + beam_splitter stem_up 힌트.
-     - 기둥 x: 중간 행 실제 픽셀에서 탐색 (bbox 추정은 ~10px 오차).
-     - `DetectedNote` (is_dotted 포함) + `DetectedRest` 분리.
+       (HEAD_FILL_THRESHOLD=0.50) → 깃발 수(4-conn) 순서로 분류.
+     - **기둥 방향(stem_up) 판별**: 투영(projection) 기반.
+       세로 투영(vproj)으로 기둥 열 마스킹 → 가로 투영(hproj)으로
+       머리가 상단/하단 중 어디인지 판단. density 비교보다 견고.
+     - **head_x 추정**: 기둥 열 중심 찾기 → 반대편이 머리.
+       stem_x_hint 있으면 우선 사용.
      - 점음표: 머리 오른쪽 4~60px blob 탐지 (`_detect_dot`).
      - 쉼표: 블록형(전/2분, aspect>3) + 선형(4분/8분, h<gap×2, aspect<1).
+     - 노이즈 필터: 마디선(`_is_barline`, w<6, h≥r×6), 텍스트(aspect>5+h<gap),
+       ROI margin 분리(상단 3.5×gap, 하단 2.5×gap), pitch 범위 필터(±10 step),
+       next_staff_top_y 클램프(가사/코드 기호 영역 제외).
      알려진 한계:
+       - 이성부/화음(chord) 미지원 — 같은 x에 음표가 2개인 악보(꿈꾸지 않으면 F)
        - 16분음표 step=0~3: 두 번째 깃발이 오선 줄과 겹쳐 제거→eighth 오분류
-         (구조적 한계, 실제 교과서에서 발생 빈도 낮음)
-       - stem_down 빔: 두 번째 음표 sixteenth 오분류 가능 (빔이 깃발 탐색
-         범위와 겹침)
+       - stem_down 빔: 두 번째 음표 sixteenth 오분류 가능
      `tests/test_note_detector.py` 24개.
 
   4. ✅ **빔 분리** (`note_recognition/beam_splitter.py`):
      세로 투영 피크(최댓값의 30% 이상) = 기둥 위치 → 피크 사이 최솟값
-     구간 중점 = 분할선. 각 서브bbox에 `stem_up` 힌트(가로 투영 상하
-     비교)와 `stem_x` 힌트(피크 x) 반환. 3개 묶음까지 검증.
-     `tests/test_beam_splitter.py` 15개 (내부 함수 직접 테스트 포함).
+     구간 중점 = 분할선. 각 서브bbox에 `stem_up`/`stem_x` 힌트 반환.
+     3개 묶음까지 검증. `_is_barline()` (w<6, h≥r×6)로 마디선 필터.
+     `tests/test_beam_splitter.py` 15개.
 
   5. ✅ **음높이 판정** (`note_recognition/note_pitcher.py`):
-     `head_y_to_staff_step()` = `round((line4_y - head_y) × 2 / staff_gap)`.
-     오차 허용: ±4px (짝수 step ±5px, 홀수 step ±4px — 실측).
-     `staff_step_to_pitch()` — treble/bass 온음계 매핑.
-     `Pitch` — name_with_octave + midi_note.
-     `tests/test_note_pitcher.py` 15개 (경계값, 왕복, 빔 그룹 음높이 포함).
+     오차 허용: ±4px. `tests/test_note_pitcher.py` 15개.
 
   6. ✅ **조표 + 마디 내 임시표** (`note_recognition/key_signature.py`):
-     `get_accidental_map(key_sig)` — Circle of Fifths 샵/플랫.
-     `apply_key_signature()` — 기존 임시표 우선.
      `MeasureAccidentalState` — 마디 경계 reset() / 음표별 apply(pitch).
-     우선순위: 마디 내 임시표 > 조표. 제자리표(natural) 미지원
-     (accidental=""와 구분 불가).
+     우선순위: 마디 내 임시표 > 조표. 제자리표(natural) 미지원.
      `tests/test_key_signature.py` 20개.
 
   7. ✅ **MusicXML 생성** (`note_recognition/xml_builder.py`):
-     음표/쉼표를 x좌표 기준 통합 정렬(`_make_events`).
-     마디 분리: `barlines` 있으면 x 비교, 없으면 박자 누산 fallback.
-     `MeasureAccidentalState`로 마디별 임시표 관리.
-     점음표: duration.dots=1 + quarterLength×1.5.
-     `tests/test_xml_builder.py` 21개 (barlines/beat 일관성, 조표 통합,
-     점음표+빔 MusicXML 포함).
+     음표/쉼표 x좌표 통합 정렬. barlines 기반 마디 분리. 임시표 관리.
+     `tests/test_xml_builder.py` 21개.
 
   8. ✅ **opencv 엔진 main.py 연동** (`opencv_runner.py`):
      `python main.py full --engine opencv --pdf ... --orig ...` 사용 가능.
-     config.ini `[opencv]`에서 key_sig/time_sig/clef_type 읽음.
-     `compare-engines` 3개 엔진 비교로 확장.
-     `_build_measure_map_and_save_images()` — 페이지 이미지(150dpi)
-     저장 + 마디 위치 매핑. HTML 리포트 클릭 시 PDF 위치 하이라이트.
+     config.ini `[opencv]`에서 key_sig/time_sig/clef_type/threshold 읽음.
+     next_staff_top_y 전달로 오선 간 가사 영역 제외.
+     HTML 리포트 클릭 시 PDF 위치 하이라이트.
 
-  **합성 이미지 기준 정확도** (`python benchmark_opencv.py`):
-  음가 분류 100%(23/23) · 빔 분리 100% · 음높이 100% ·
-  점음표 100% · 쉼표 100% · 조표 100% → **전체 100%(54/54)**
-  ※ 16분음표 step=0~3 오선 겹침 케이스는 구조적 한계로 제외
+  **합성 이미지 기준 정확도** (`python benchmark_opencv.py`): **전체 100%(54/54)**
+
+  **실제 교과서 PDF 5개 샘플 결과** (초기 → 현재, 노이즈 기준):
+  남촌 C: 184→159, 꿈꾸지: 239→236, DQ: 200→163, 태양D: 173→137, 태양F: 330→232
+  **합계 1130→927 (-18%)** | 꿈꾸지 누락 182건은 이성부 화음(구조적 한계)
 
 ## 로컬 테스트 시 확인 우선순위 (파라미터 튜닝 가이드)
 
