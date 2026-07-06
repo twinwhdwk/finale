@@ -181,6 +181,19 @@ def _process_page(
     if not all_zones:
         raise RuntimeError(f"페이지 {page_num + 1}: 오선을 감지하지 못했습니다")
 
+    # 주 gap(최빈값)과 크게 다른 작은 오선 제외.
+    # 교과서 페이지 상단의 참고 악보(발성 연습 등)는 본 악보보다 작게 인쇄됨
+    # → MXL에 없는 음표를 대량 검출하는 노이즈원 (오 나의 태양 D: 69건).
+    if len(all_zones) >= 3:
+        import collections as _coll
+        gaps = [(zb - zt) // 4 for zt, zb in all_zones]
+        main_gap = _coll.Counter(gaps).most_common(1)[0][0]
+        kept = [z for z, g in zip(all_zones, gaps) if g >= main_gap * 0.85]
+        if len(kept) >= 2 and len(kept) < len(all_zones):
+            print(f"    참고용 소형 오선 {len(all_zones) - len(kept)}개 제외 "
+                  f"(주 gap={main_gap}px 기준)")
+            all_zones = kept
+
     # 그랜드 스태프(트레블+베이스 2단 등) 시스템 감지 후 원하는 파트만 추출
     # 바라인 x좌표 공유 여부로 같은 시스템 판단
     systems = _group_zones_into_systems(all_zones, img_gray=img_gray)

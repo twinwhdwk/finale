@@ -50,6 +50,9 @@ HEAD_FILL_THRESHOLD = 0.50   # 채워진 머리 판정 임계값 (quarter 이하
 # 0.47에서는 half가 칸(홀수 step) 위치에서 quarter로 오분류됨
 MIN_NOTE_AREA = 50            # 노이즈/아티팩트 제거용 최소 픽셀 수
 ELLIPSE_FILL_MIN = 0.30       # 음표머리 타원성 최소값 (미만이면 노이즈로 제거)
+HOLLOW_HEAD_DENSITY_MIN = 0.22  # half/whole(빈 머리) density 하한
+# 진짜 빈 타원 테두리: 0.3~0.5 (합성 0.39~0.49). 미만은 산발 픽셀 노이즈.
+# MXL whole=0인 악보에서 whole 45~81개 검출되던 문제의 주 원인.
 # 실측(오 나의 태양 F, 300dpi): 진짜 채워진 머리 fill=0.83~0.95,
 # 진짜 half(빈 머리) fill=0.43~0.72, 노이즈(텍스트/기호) fill=0.01~0.19
 
@@ -604,6 +607,12 @@ def detect_notes(
         fill = _head_ellipse_fill(binary_roi, note.head_x, note.head_y,
                                   notehead_radius)
         if fill < ELLIPSE_FILL_MIN:
+            continue
+
+        # 빈 머리(half/whole) density 하한: 진짜 빈 타원 테두리는 0.3~0.5.
+        # 그 미만이면 타원조차 아닌 산발 픽셀(가사 잔재/기호) → 제거.
+        if note.duration in ("half", "whole") and \
+                note.head_fill_density < HOLLOW_HEAD_DENSITY_MIN:
             continue
 
         notes.append(note)
