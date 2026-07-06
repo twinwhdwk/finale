@@ -88,8 +88,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **합성 이미지 기준 정확도** (`python benchmark_opencv.py`): **전체 100%(54/54)**
 
   **실제 교과서 PDF 5개 샘플 결과** (초기 → 현재, 노이즈 기준):
-  남촌 C: 184→159, 꿈꾸지: 239→236, DQ: 200→163, 태양D: 173→137, 태양F: 330→232
-  **합계 1130→927 (-18%)** | 꿈꾸지 누락 182건은 이성부 화음(구조적 한계)
+  남촌 C: 184→90, 꿈꾸지: 239→194, DQ: 200→97, 태양D: 173→138, 태양F: 330→175
+  **노이즈 합계 1130→694 (-39%)**, 누락 350→320
+
+  최근 추가된 노이즈/누락 개선 (검증 완료):
+  - 타원성 필터(`_head_ellipse_fill`, ELLIPSE_FILL_MIN=0.30): 진짜 머리
+    fill=0.43~0.95 vs 노이즈 0.01~0.19. cv2.fitEllipse 기반. -128건
+  - 화음 멤버 duration 상속: 채워진 머리+기둥 없음=whole 불가 →
+    같은 x(±1.5r) 기둥 음표에서 상속. 이성부(꿈꾸지) 누락 -22건
+  - HOLLOW_HEAD_DENSITY_MIN=0.22: half/whole 빈 머리 density 하한.
+    MXL whole=0인데 whole 45~81개 검출되던 산발 픽셀 노이즈 제거
+  - 참고용 소형 오선 제외(opencv_runner): 주 gap 85% 미만 오선 스킵
+    (태양 D 페이지 상단 발성연습 악보 69건 제거)
+  - density용 head_y 투영 argmax 교정: bbox에 타이 조각 붙을 때
+    공식(y+r)이 최대 51px 어긋나던 문제. 편차>r인 케이스만 교정,
+    pitch용 head_y는 공식 유지
 
 ## 로컬 테스트 시 확인 우선순위 (파라미터 튜닝 가이드)
 
