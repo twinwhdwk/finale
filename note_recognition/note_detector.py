@@ -612,6 +612,41 @@ def detect_notes(
     notes.sort(key=lambda n: n.head_x)
     rests.sort(key=lambda r: r.center_x)
 
+    # ── 화음(chord) 멤버 duration 상속 ──
+    # whole은 빈 머리여야 하는데, 채워진 머리(density≥threshold)인데 기둥이
+    # 없어 whole로 분류된 성분 = 화음에서 기둥이 다른 머리에 연결된 멤버.
+    # 같은 x(±1.5r)의 기둥 있는 음표에서 duration을 상속한다.
+    # 이성부 악보(꿈꾸지 않으면 F 등)의 누락 개선.
+    for i, n in enumerate(notes):
+        if n.duration != "whole" or n.head_fill_density < HEAD_FILL_THRESHOLD:
+            continue
+        # 인접 탐색 (x 근접 + 기둥 있는 음표)
+        mate = None
+        for m in notes:
+            if m is n or m.duration == "whole":
+                continue
+            if abs(m.head_x - n.head_x) <= notehead_radius * 1.5:
+                mate = m
+                break
+        if mate is not None:
+            notes[i] = DetectedNote(
+                bbox=n.bbox, head_x=n.head_x, head_y=n.head_y,
+                duration=mate.duration, n_flags=mate.n_flags,
+                stem_up=mate.stem_up,
+                head_fill_density=n.head_fill_density,
+                is_dotted=n.is_dotted,
+                component_area=n.component_area,
+            )
+        else:
+            # 화음 짝이 없어도 채워진 머리는 whole일 수 없음 → quarter로 추정
+            notes[i] = DetectedNote(
+                bbox=n.bbox, head_x=n.head_x, head_y=n.head_y,
+                duration="quarter", n_flags=0, stem_up=None,
+                head_fill_density=n.head_fill_density,
+                is_dotted=n.is_dotted,
+                component_area=n.component_area,
+            )
+
     # 붙임줄/이음줄 호 감지.
     # 음표 감지용 x_start(바라인 기반)는 첫 마디 전체를 마스킹할 수 있으므로
     # 아크 감지는 clef/key/time sig 영역만 제외하는 작은 값을 사용.
