@@ -305,6 +305,34 @@ def _classify_duration(
 
     head_y = head_y_if_up if stem_up_guess else head_y_if_down
 
+    # head_y 정밀화: 공식(y+r / bot-r)은 bbox에 타이 조각·여백이 붙으면
+    # 실제 머리 중심과 최대 r만큼 어긋남 → density 오측정으로 half 오분류.
+    # 기둥 열을 제외한 가로 투영(hproj)의 최대행 = 실제 머리 중심.
+    # stem 방향에 따라 해당 절반에서만 argmax를 취한다.
+    _reg_hy = binary[y:bot, x:x + w]
+    _vp_hy = _reg_hy.sum(axis=0) / 255
+    _stem_cols_hy = np.where(_vp_hy > h * 0.5)[0]
+    _rns_hy = _reg_hy.copy()
+    if len(_stem_cols_hy) > 0:
+        _rns_hy[:, _stem_cols_hy] = 0
+    _hp_hy = _rns_hy.sum(axis=1) / 255
+    _half_h = h // 2
+    head_y_for_density = head_y   # density 측정 전용 (pitch에는 영향 없음)
+    if stem_up_guess:
+        _seg = _hp_hy[_half_h:]
+        if _seg.max() >= notehead_radius:  # 머리 규모 질량이 있을 때만
+            _cand = y + _half_h + int(np.argmax(_seg))
+            # 공식값과 절반 반지름 이상 어긋난 경우(타이 조각·여백으로
+            # bbox가 늘어난 케이스)만 교정. 미세 차이는 공식이 더 안정적.
+            if abs(_cand - head_y) > notehead_radius:
+                head_y_for_density = _cand
+    else:
+        _seg = _hp_hy[:max(1, _half_h)]
+        if _seg.max() >= notehead_radius:
+            _cand = y + int(np.argmax(_seg))
+            if abs(_cand - head_y) > notehead_radius:
+                head_y_for_density = _cand
+
     # head_x: stem_x_hint 우선, 없으면 기둥 위치에서 역산
     if stem_x_hint is not None:
         if stem_up_guess:
@@ -332,7 +360,7 @@ def _classify_duration(
 
     # ── 3단계: 머리 밀도 → half vs (quarter/eighth/sixteenth) 구분 ──
     head_region = binary[
-        max(0, head_y - notehead_radius): head_y + notehead_radius,
+        max(0, head_y_for_density - notehead_radius): head_y_for_density + notehead_radius,
         max(0, head_x - notehead_radius): head_x + notehead_radius
     ]
     head_density = _pixel_density(head_region)
