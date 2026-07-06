@@ -14,7 +14,10 @@ import numpy as np
 import cv2
 from PIL import Image, ImageFilter, ImageEnhance
 import pytesseract
-import easyocr
+try:
+    import easyocr
+except ImportError:
+    easyocr = None  # OCR 기능(가사 인식) 비활성화 — 나머지 파이프라인은 정상 동작
 import fitz
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,10 +38,12 @@ _CHORD_PATTERN = re.compile(
 # whitelist에 '/' 추가 (slash chord용)
 _TESSERACT_CHORD = r"--psm 6 -c tessedit_char_whitelist=ABCDEFGabcdefgmM#b1234567/"
 
-_ocr_reader: easyocr.Reader | None = None
+_ocr_reader = None
 
 
-def _get_ocr() -> easyocr.Reader:
+def _get_ocr():
+    if easyocr is None:
+        raise RuntimeError("easyocr 미설치 — pip install easyocr")
     global _ocr_reader
     if _ocr_reader is None:
         _ocr_reader = easyocr.Reader(['ko', 'en'], gpu=False)

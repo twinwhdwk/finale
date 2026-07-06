@@ -49,6 +49,39 @@ HEAD_FILL_THRESHOLD = 0.50   # 채워진 머리 판정 임계값 (quarter 이하
 # 합성 이미지 실측: half 최대=0.486(칸 위치), quarter 최소=0.576 → 여유 0.09
 # 0.47에서는 half가 칸(홀수 step) 위치에서 quarter로 오분류됨
 MIN_NOTE_AREA = 50            # 노이즈/아티팩트 제거용 최소 픽셀 수
+ELLIPSE_FILL_MIN = 0.30       # 음표머리 타원성 최소값 (미만이면 노이즈로 제거)
+# 실측(오 나의 태양 F, 300dpi): 진짜 채워진 머리 fill=0.83~0.95,
+# 진짜 half(빈 머리) fill=0.43~0.72, 노이즈(텍스트/기호) fill=0.01~0.19
+
+
+def _head_ellipse_fill(binary: np.ndarray, head_x: int, head_y: int,
+                       notehead_radius: int) -> float:
+    """
+    head 위치 패치에서 최대 contour를 타원 피팅해 fill 비율을 반환.
+
+    진짜 음표머리는 타원형이라 contour 면적/타원 면적이 높고(0.4+),
+    텍스트·기호 조각은 불규칙해서 낮다(0.2 미만).
+    판단 불가(빈 패치, 극소 contour)일 때는 1.0을 반환해 필터를 통과시킨다
+    (보수적: 확실한 노이즈만 제거).
+    """
+    r = notehead_radius
+    y0, y1 = max(0, head_y - r - 2), head_y + r + 2
+    x0, x1 = max(0, head_x - r - 2), head_x + r + 2
+    patch = binary[y0:y1, x0:x1]
+    if patch.size == 0 or patch.sum() == 0:
+        return 1.0
+    contours, _ = cv2.findContours(patch, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 1.0
+    c = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(c)
+    if area < 20 or len(c) < 5:
+        return 1.0
+    (_, _), (MA, ma), _ = cv2.fitEllipse(c)
+    ellipse_area = np.pi * MA * ma / 4.0
+    if ellipse_area <= 0:
+        return 1.0
+    return float(area / ellipse_area)
 _NOTEHEAD_RADIUS_RATIO = 0.55  # notehead 반지름 / staff_gap 비율
 _HAS_STEM_HEIGHT_RATIO = 2.5   # 기둥 판정 높이 배율
 
@@ -567,6 +600,12 @@ def detect_notes(
             staff_top_y=staff_top_y,
             staff_bot_y=staff_bot_y,
         )
+        # 타원성 검증: 음표머리가 타원형이 아니면 텍스트/기호 노이즈로 제거
+        fill = _head_ellipse_fill(binary_roi, note.head_x, note.head_y,
+                                  notehead_radius)
+        if fill < ELLIPSE_FILL_MIN:
+            continue
+
         notes.append(note)
 
     # x순 정렬 (악보 읽기 순서)
