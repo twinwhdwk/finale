@@ -221,9 +221,10 @@ def _process_page(
         import collections as _coll
         gaps = [(zb - zt) // 4 for zt, zb in all_zones]
         main_gap = _coll.Counter(gaps).most_common(1)[0][0]
-        kept = [z for z, g in zip(all_zones, gaps) if g >= main_gap * 0.85]
+        kept = [z for z, g in zip(all_zones, gaps)
+                if main_gap * 0.85 <= g <= main_gap * 1.5]
         if len(kept) >= 2 and len(kept) < len(all_zones):
-            print(f"    참고용 소형 오선 {len(all_zones) - len(kept)}개 제외 "
+            print(f"    비정상 크기 오선 {len(all_zones) - len(kept)}개 제외 "
                   f"(주 gap={main_gap}px 기준)")
             all_zones = kept
 
