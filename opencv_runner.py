@@ -44,25 +44,58 @@ def _staff_gap_from_zone(zone) -> int:
 def _group_zones_into_systems(zones: list, img_gray=None) -> list[list]:
     """오선 목록을 시스템(그랜드 스태프 포함) 단위로 묶는다.
 
-    y-gap 기반: 직전 오선과의 수직 간격이 staff_h의 2배 이내면 같은 시스템.
-    - 그랜드 스태프(피아노 등): y-gap ≈ 0.3-0.5h → 같은 시스템
-    - 단성부 다음 시스템: y-gap ≈ 3-5h → 다른 시스템
-    반환값은 [[zone, ...], ...] 형태.
+    적응형 y-gap 임계값:
+    시스템 내 gap과 시스템 간 gap이 절대값으로는 비슷할 수 있어
+    (꿈꾸지 않으면 F: 2.1~2.3h vs 2.6~2.7h) 고정 임계(2.0h)가 실패함.
+    → gap 목록을 정렬해 가장 큰 상대 점프 지점을 임계로 사용.
+      점프가 작으면(< 15%) 모든 오선이 독립 시스템(단선율 악보).
     """
     if not zones:
         return []
-    groups: list[list] = [[zones[0]]]
-    for zone in zones[1:]:
-        prev = groups[-1][-1]
-        prev_top = prev[0] if isinstance(prev, tuple) else prev.top_y
-        prev_bot = prev[1] if isinstance(prev, tuple) else prev.bot_y
-        cur_top  = zone[0] if isinstance(zone, tuple) else zone.top_y
-        staff_h  = max(1, prev_bot - prev_top)
-        y_gap    = cur_top - prev_bot
-        if y_gap < staff_h * 2.0:
-            groups[-1].append(zone)
-        else:
-            groups.append([zone])
+
+    def _top(z):  return z[0] if isinstance(z, tuple) else z.top_y
+    def _bot(z):  return z[1] if isinstance(z, tuple) else z.bot_y
+
+    if len(zones) == 1:
+        return [[zones[0]]]
+
+    # 인접 오선 간 y_gap을 staff_h 배수로 정규화
+    ratios = []
+    for i in range(1, len(zones)):
+        staff_h = max(1, _bot(zones[i-1]) - _top(zones[i-1]))
+        ratios.append((_top(zones[i]) - _bot(zones[i-1])) / staff_h)
+
+    # 적응형 임계값: 정렬된 ratio에서 최대 상대 점프 지점
+    threshold = 2.0  # fallback (기존 동작)
+    if len(ratios) >= 3:
+        s = sorted(ratios)
+        best_jump, best_i = 0.0, -1
+        for i in range(len(s) - 1):
+            jump = s[i+1] - s[i]
+            if jump > best_jump:
+                best_jump, best_i = jump, i
+        if best_i >= 0 and best_jump > 0.2:
+            threshold = (s[best_i] + s[best_i + 1]) / 2.0
+
+    def _split(thr):
+        gs: list[list] = [[zones[0]]]
+        for i, zone in enumerate(zones[1:]):
+            if ratios[i] < thr:
+                gs[-1].append(zone)
+            else:
+                gs.append([zone])
+        return gs
+
+    groups = _split(threshold)
+
+    # ── 균일성 검증 ──
+    # 진짜 다단(2단 합창/그랜드 스태프) 악보는 페이지 내 모든 시스템이
+    # 같은 단수로 균일하다. 그룹 크기가 섞이면(예: [2,1,1,...]) 임계값이
+    # 우연히 걸린 것 → 전부 1단으로 flatten.
+    # (태양 F: 단선율인데 첫 gap=1.99h로 [2,1,...]이 되던 문제 해결)
+    sizes = {len(g) for g in groups}
+    if len(sizes) > 1 and max(sizes) >= 2:
+        groups = [[z] for z in zones]
     return groups
 
 
