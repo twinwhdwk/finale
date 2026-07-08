@@ -46,7 +46,7 @@ class SuspectMeasure:
     mismatch: int      # step이 2 이상 다른 음 수 (강한 의심)
     missing: int       # PDF에서 대응을 못 찾은 음 수 (강한 의심)
     near: int          # step이 1 차이 (반올림 경계 가능성 — 약한 의심)
-    pdf_hint: tuple | None  # 근처 PDF 위치 (page, system) — 리포트 표시용
+    pdf_hint: tuple | None  # (page, system, x_min, x_max) — 리포트/크롭용
 
     @property
     def strong(self) -> bool:
@@ -210,7 +210,7 @@ def compare_steps(
 
     match = mismatch = pdf_only = mxl_only = 0
     bad: dict[int, list[int]] = collections.defaultdict(lambda: [0, 0, 0])
-    hint: dict[int, tuple] = {}
+    hint: dict[int, list] = {}
 
     for a, b in pairs:
         if a is not None and b is not None:
@@ -218,15 +218,20 @@ def compare_steps(
             mm = mxl_notes[b].measure
             if d == 0:
                 match += 1
+                # 정상 매칭도 위치 힌트에 누적 (의심 마디 크롭 범위 계산용)
+                hint.setdefault(mm, []).append(
+                    (pdf_notes[a].page, pdf_notes[a].system, pdf_notes[a].x))
             elif d == 1:
                 # 반올림 경계 가능성 — 약한 의심으로만 기록
                 match += 1
                 bad[mm][2] += 1
-                hint.setdefault(mm, (pdf_notes[a].page, pdf_notes[a].system))
+                hint.setdefault(mm, []).append(
+                    (pdf_notes[a].page, pdf_notes[a].system, pdf_notes[a].x))
             else:
                 mismatch += 1
                 bad[mm][0] += 1
-                hint.setdefault(mm, (pdf_notes[a].page, pdf_notes[a].system))
+                hint.setdefault(mm, []).append(
+                    (pdf_notes[a].page, pdf_notes[a].system, pdf_notes[a].x))
         elif a is not None:
             pdf_only += 1
         else:
@@ -234,9 +239,18 @@ def compare_steps(
             mm = mxl_notes[b].measure
             bad[mm][1] += 1
 
+    def _hint_of(m):
+        pts = hint.get(m)
+        if not pts:
+            return None
+        # 최빈 (page, system)의 x 범위
+        ps = collections.Counter((p, s) for p, s, _ in pts).most_common(1)[0][0]
+        xs = [x for p, s, x in pts if (p, s) == ps]
+        return (ps[0], ps[1], min(xs), max(xs))
+
     suspects = [
         SuspectMeasure(measure=m, mismatch=v[0], missing=v[1], near=v[2],
-                       pdf_hint=hint.get(m))
+                       pdf_hint=_hint_of(m))
         for m, v in sorted(bad.items())
     ]
     return StepDiffResult(
@@ -300,10 +314,108 @@ def print_report(r: StepDiffResult) -> None:
         print(f"    [약] 마디 {s.measure}: 근접차이 {s.near}{loc}")
 
 
+
+
+# ── 시각 리포트 ───────────────────────────────────────────────────────
+
+def save_visual_report(pdf_path: str, result: StepDiffResult,
+                       out_html: str, dpi: int = 300) -> str:
+    """
+    의심 마디마다 PDF 해당 구간을 크롭해 빨간 박스로 표시한 HTML 저장.
+    검토자는 이 파일만 열어 의심 구간을 눈으로 확인하면 된다.
+    """
+    import base64
+    import fitz
+    import cv2
+    from pdf_parser import _detect_staves
+
+    # 페이지 이미지 캐시
+    doc = fitz.open(pdf_path)
+    pages: dict[int, np.ndarray] = {}
+    zones_by_page: dict[int, list] = {}
+    for pno in range(len(doc)):
+        pix = doc[pno].get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72),
+                                  colorspace=fitz.csGRAY)
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width)
+        pages[pno + 1] = img
+        zones_by_page[pno + 1] = _detect_staves(img)
+    doc.close()
+
+    def crop_b64(page: int, system: int, x0: int, x1: int) -> str | None:
+        img = pages.get(page)
+        zones = zones_by_page.get(page)
+        if img is None or not zones or system > len(zones):
+            return None
+        zt, zb = zones[system - 1]
+        gap = max(1, (zb - zt) // 4)
+        y0 = max(0, zt - gap * 4)
+        y1 = min(img.shape[0], zb + gap * 4)
+        pad = gap * 4
+        cx0 = max(0, x0 - pad)
+        cx1 = min(img.shape[1], x1 + pad)
+        crop = cv2.cvtColor(img[y0:y1, cx0:cx1], cv2.COLOR_GRAY2BGR)
+        cv2.rectangle(crop, (x0 - cx0 - gap, 0),
+                      (x1 - cx0 + gap, crop.shape[0] - 1), (0, 0, 255), 3)
+        ok, buf = cv2.imencode('.png', crop)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode()
+
+    rows = []
+    for s in sorted(result.suspects, key=lambda s: (not s.strong, s.measure)):
+        grade = "강" if s.strong else "약"
+        detail = (f"불일치 {s.mismatch}, 누락 {s.missing}" if s.strong
+                  else f"근접차이 {s.near}")
+        img_tag = ""
+        if s.pdf_hint:
+            p, sysn, x0, x1 = s.pdf_hint
+            b64 = crop_b64(p, sysn, x0, x1)
+            loc = f"PDF p{p} {sysn}단"
+            if b64:
+                img_tag = f'<img src="data:image/png;base64,{b64}">'
+        else:
+            loc = "위치 미상 (마디 전체 누락)"
+        rows.append(
+            f'<div class="item {"strong" if s.strong else "weak"}">'
+            f'<h3>[{grade}] 마디 {s.measure} <small>{detail} · {loc}</small></h3>'
+            f'{img_tag}</div>')
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>step-diff 리포트</title><style>
+body{{font-family:sans-serif;max-width:1100px;margin:20px auto;padding:0 16px}}
+.item{{border:1px solid #ccc;border-radius:6px;padding:10px;margin:12px 0}}
+.item.strong{{border-left:6px solid #d33}}
+.item.weak{{border-left:6px solid #e90}}
+.item img{{max-width:100%;border:1px solid #eee}}
+h3 small{{color:#666;font-weight:normal;font-size:0.75em}}
+.summary{{background:#f5f5f5;padding:10px;border-radius:6px}}
+</style></head><body>
+<h1>step-diff 채보 오류 의심 리포트</h1>
+<div class="summary">파트 {result.part_index} ·
+일치 {result.match}/{result.total_mxl} ({result.match_rate*100:.0f}%) ·
+강한 의심 {sum(1 for s in result.suspects if s.strong)}개 ·
+약한 의심 {sum(1 for s in result.suspects if not s.strong)}개</div>
+{''.join(rows) if rows else '<p>의심 마디 없음</p>'}
+</body></html>"""
+
+    with open(out_html, 'w', encoding='utf-8') as f:
+        f.write(html)
+    return out_html
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
         print("사용법: python step_diff.py <pdf> <mxl> [part_index]")
         sys.exit(1)
-    pi = int(sys.argv[3]) if len(sys.argv) > 3 else None
-    print_report(compare_pdf_to_mxl(sys.argv[1], sys.argv[2], part_index=pi))
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    html_out = None
+    for a in sys.argv[1:]:
+        if a.startswith("--html="):
+            html_out = a.split("=", 1)[1]
+    pi = int(args[2]) if len(args) > 2 else None
+    result = compare_pdf_to_mxl(args[0], args[1], part_index=pi)
+    print_report(result)
+    if html_out:
+        path = save_visual_report(args[0], result, html_out)
+        print(f"  시각 리포트 저장: {path}")

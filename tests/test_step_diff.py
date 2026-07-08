@@ -63,3 +63,28 @@ def test_noise_does_not_create_suspects():
     mxl = _mxl([(0, 1), (2, 1), (4, 2)])
     r = compare_steps(pdf, mxl, try_offsets=False)
     assert r.pdf_only == 2 and not r.suspects
+
+
+def test_suspect_hint_includes_x_range():
+    # 힌트가 (page, system, x_min, x_max) 4-tuple로 채워짐
+    pdf = _pdf([0, 2, 6, 4])
+    mxl = _mxl([(0, 1), (2, 1), (4, 2), (4, 2)])
+    r = compare_steps(pdf, mxl, try_offsets=False)
+    s = next(s for s in r.suspects if s.measure == 2)
+    assert s.pdf_hint is not None and len(s.pdf_hint) == 4
+
+
+def test_visual_report_saved(tmp_path):
+    from step_diff import save_visual_report, StepDiffResult, SuspectMeasure
+    # PDF 없이도 위치 미상 의심 마디는 이미지 없이 HTML 생성돼야 함
+    r = StepDiffResult(part_index=0, match=1, mismatch=1, pdf_only=0,
+                       mxl_only=0, total_mxl=2,
+                       suspects=[SuspectMeasure(measure=2, mismatch=1,
+                                                missing=0, near=0,
+                                                pdf_hint=None)])
+    out = tmp_path / "r.html"
+    # 실제 PDF가 필요하므로 픽스처 PDF 사용
+    pdf = "tests/fixtures/scores/오 나의 태양 F (고등 음악 도서출판 박영사).pdf"
+    save_visual_report(pdf, r, str(out))
+    html = out.read_text(encoding="utf-8")
+    assert "마디 2" in html and "강" in html

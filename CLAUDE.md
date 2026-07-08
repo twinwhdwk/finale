@@ -107,7 +107,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **오류 주입 검증: 음 하나 3도 변경 시 탐지율 12/12(100%), 추가 오경보 0.**
   남촌(20%)·DQ(35%)는 MXL이 교과서와 다른 편곡 판본임이 드러남
   (남촌 교과서=단선율 멜로디, MXL=화음 116/136 피아노 편곡).
-  `tests/test_step_diff.py` 7개.
+  시각 리포트: `--html=out.html` 옵션으로 의심 마디별 PDF 구간 크롭
+  (빨간 박스 하이라이트, base64 embed 단일 HTML) 생성 —
+  `save_visual_report()`. 정상 매칭 음도 위치 힌트에 누적해
+  누락-only 마디도 크롭 가능.
+  `tests/test_step_diff.py` 9개.
 
   **실제 교과서 PDF 5개 샘플 결과** (초기 → 현재, 노이즈 기준):
   남촌 C: 184→90, 꿈꾸지: 239→104, DQ: 200→97, 태양D: 173→138, 태양F: 330→172
