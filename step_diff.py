@@ -43,9 +43,14 @@ class MxlNote:
 @dataclass
 class SuspectMeasure:
     measure: int
-    mismatch: int      # step이 다른 음 수
-    missing: int       # PDF에서 대응을 못 찾은 음 수
+    mismatch: int      # step이 2 이상 다른 음 수 (강한 의심)
+    missing: int       # PDF에서 대응을 못 찾은 음 수 (강한 의심)
+    near: int          # step이 1 차이 (반올림 경계 가능성 — 약한 의심)
     pdf_hint: tuple | None  # 근처 PDF 위치 (page, system) — 리포트 표시용
+
+    @property
+    def strong(self) -> bool:
+        return self.mismatch > 0 or self.missing > 0
 
 
 @dataclass
@@ -93,7 +98,10 @@ def extract_pdf_steps(pdf_path: str, dpi: int = 300) -> list[PdfNote]:
             nt = zones[zi + 1][0] if zi + 1 < len(zones) else None
             t = detect_staff_line_thickness(img, [(zt, zb)])
             bars = _detect_barlines(img, zt, zb)
-            x_start = max(0, bars[0] - gap * 3) if bars else img.shape[1] // 10
+            # 첫 barline - 3*gap은 pickup/첫 음을 자르는 사례가 있어(실측)
+            # 여유를 크게 둔다. 조표·박자표가 오검출돼도 NW 정렬이
+            # pdf_only(잉여)로 흡수하므로 안전.
+            x_start = max(0, bars[0] - gap * 12) if bars else img.shape[1] // 10
             res = detect_notes(img, zt, zb, staff_gap=gap, line_thickness=t,
                                x_start=x_start, next_staff_top_y=nt)
             for n in sorted(res.notes, key=lambda n: n.head_x):
@@ -128,7 +136,18 @@ def list_part_sizes(mxl_path: str) -> list[int]:
 
 # ── 정렬 ─────────────────────────────────────────────────────────────
 
-_MATCH, _MISMATCH, _GAP = 2, -1, -1
+_MATCH, _NEAR, _MISMATCH, _GAP = 2, 0, -1, -1
+# _NEAR: |step 차|=1은 head_y 반올림 경계 오차일 가능성이 커 중립 처리.
+# 진짜 채보 오류는 대개 2 이상(3도) 차이라 민감도에 영향 없음 (주입 검증).
+
+
+def _score(a: int, b: int) -> int:
+    d = abs(a - b)
+    if d == 0:
+        return _MATCH
+    if d == 1:
+        return _NEAR   # 반올림 경계 오차 우대 (약한 의심으로 집계)
+    return _MISMATCH
 
 
 def _align(A: list[int], B: list[int]) -> list[tuple[int | None, int | None]]:
@@ -143,15 +162,14 @@ def _align(A: list[int], B: list[int]) -> list[tuple[int | None, int | None]]:
         row = S[i]
         for j in range(1, n + 1):
             row[j] = max(
-                row_prev[j - 1] + (_MATCH if ai == B[j - 1] else _MISMATCH),
+                row_prev[j - 1] + _score(ai, B[j - 1]),
                 row_prev[j] + _GAP,
                 row[j - 1] + _GAP,
             )
     i, j = m, n
     pairs: list[tuple[int | None, int | None]] = []
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and S[i][j] == S[i - 1][j - 1] + (
-                _MATCH if A[i - 1] == B[j - 1] else _MISMATCH):
+        if i > 0 and j > 0 and S[i][j] == S[i - 1][j - 1] + _score(A[i - 1], B[j - 1]):
             pairs.append((i - 1, j - 1)); i -= 1; j -= 1
         elif i > 0 and S[i][j] == S[i - 1][j] + _GAP:
             pairs.append((i - 1, None)); i -= 1
@@ -191,16 +209,22 @@ def compare_steps(
     pairs = best_pairs
 
     match = mismatch = pdf_only = mxl_only = 0
-    bad: dict[int, list[int]] = collections.defaultdict(lambda: [0, 0])
+    bad: dict[int, list[int]] = collections.defaultdict(lambda: [0, 0, 0])
     hint: dict[int, tuple] = {}
 
     for a, b in pairs:
         if a is not None and b is not None:
-            if A[a] == B[b]:
+            d = abs(A[a] - B[b])
+            mm = mxl_notes[b].measure
+            if d == 0:
                 match += 1
+            elif d == 1:
+                # 반올림 경계 가능성 — 약한 의심으로만 기록
+                match += 1
+                bad[mm][2] += 1
+                hint.setdefault(mm, (pdf_notes[a].page, pdf_notes[a].system))
             else:
                 mismatch += 1
-                mm = mxl_notes[b].measure
                 bad[mm][0] += 1
                 hint.setdefault(mm, (pdf_notes[a].page, pdf_notes[a].system))
         elif a is not None:
@@ -211,7 +235,7 @@ def compare_steps(
             bad[mm][1] += 1
 
     suspects = [
-        SuspectMeasure(measure=m, mismatch=v[0], missing=v[1],
+        SuspectMeasure(measure=m, mismatch=v[0], missing=v[1], near=v[2],
                        pdf_hint=hint.get(m))
         for m, v in sorted(bad.items())
     ]
@@ -265,10 +289,15 @@ def print_report(r: StepDiffResult) -> None:
     if not r.suspects:
         print("  의심 마디 없음 — 채보 오류가 발견되지 않았습니다.")
         return
-    print(f"  의심 마디 {len(r.suspects)}개:")
-    for s in r.suspects:
+    strong = [s for s in r.suspects if s.strong]
+    weak = [s for s in r.suspects if not s.strong]
+    print(f"  강한 의심 {len(strong)}개, 약한 의심 {len(weak)}개:")
+    for s in strong:
         loc = f" (PDF p{s.pdf_hint[0]} {s.pdf_hint[1]}단 부근)" if s.pdf_hint else ""
-        print(f"    마디 {s.measure}: 불일치 {s.mismatch}, 누락 {s.missing}{loc}")
+        print(f"    [강] 마디 {s.measure}: 불일치 {s.mismatch}, 누락 {s.missing}{loc}")
+    for s in weak:
+        loc = f" (PDF p{s.pdf_hint[0]} {s.pdf_hint[1]}단 부근)" if s.pdf_hint else ""
+        print(f"    [약] 마디 {s.measure}: 근접차이 {s.near}{loc}")
 
 
 if __name__ == "__main__":
