@@ -107,10 +107,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **오류 주입 검증: 음 하나 3도 변경 시 탐지율 12/12(100%), 추가 오경보 0.**
   남촌(20%)·DQ(35%)는 MXL이 교과서와 다른 편곡 판본임이 드러남
   (남촌 교과서=단선율 멜로디, MXL=화음 116/136 피아노 편곡).
-  시각 리포트: `--html=out.html` 옵션으로 의심 마디별 PDF 구간 크롭
-  (빨간 박스 하이라이트, base64 embed 단일 HTML) 생성 —
-  `save_visual_report()`. 정상 매칭 음도 위치 힌트에 누적해
-  누락-only 마디도 크롭 가능.
+  시각 리포트(`--html=out.html`, `save_visual_report()`):
+  의심 마디마다 **Finale 원본(verovio 마디 렌더)과 교과서 PDF 크롭
+  (빨간 박스)을 나란히** 배치한 단일 HTML. 요약 카드(일치율/강/약),
+  강한 의심 우선 정렬, 한국어 검토 가이드 포함. 원본 렌더는
+  `_render_mxl_measures()` — 파트 추출 → 임시 musicxml → verovio
+  마디당 1단 → cairosvg PNG. cairosvg 필요(없으면 PDF 크롭만).
+  정상 매칭 음도 위치 힌트에 누적해 누락-only 마디도 크롭 가능.
   `tests/test_step_diff.py` 9개.
 
   **실제 교과서 PDF 5개 샘플 결과** (초기 → 현재, 노이즈 기준):

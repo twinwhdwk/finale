@@ -318,15 +318,53 @@ def print_report(r: StepDiffResult) -> None:
 
 # ── 시각 리포트 ───────────────────────────────────────────────────────
 
+def _render_mxl_measures(mxl_path: str, part_index: int,
+                         measures: set[int]) -> dict[int, str]:
+    """MXL 특정 파트의 지정 마디들을 verovio로 마디당 1단 렌더해
+    {마디번호: base64 PNG}로 반환. 실패 시 빈 dict (리포트는 계속 진행)."""
+    try:
+        import base64
+        import tempfile
+        import cairosvg
+        from music21 import converter, stream
+        from xml_to_systems import xml_to_systems
+
+        sc = converter.parse(mxl_path)
+        part = sc.parts[min(part_index, len(sc.parts) - 1)]
+        n_meas = len(part.getElementsByClass('Measure'))
+        new_sc = stream.Score()
+        new_sc.append(part)
+        with tempfile.NamedTemporaryFile(suffix='.musicxml',
+                                         delete=False) as tf:
+            tmp = tf.name
+        new_sc.write('musicxml', tmp)
+        sliced = xml_to_systems(tmp, measures_per_system=[1] * n_meas)
+        out: dict[int, str] = {}
+        for m in measures:
+            if 1 <= m <= sliced.total_systems:
+                svg = sliced.systems[m - 1].png_bytes
+                png = cairosvg.svg2png(bytestring=svg, scale=1.6,
+                                       background_color='white')
+                out[m] = base64.b64encode(png).decode()
+        return out
+    except Exception as e:
+        print(f"  (원본 마디 렌더 생략: {e})")
+        return {}
+
+
 def save_visual_report(pdf_path: str, result: StepDiffResult,
-                       out_html: str, dpi: int = 300) -> str:
+                       out_html: str, mxl_path: str | None = None,
+                       dpi: int = 300) -> str:
     """
-    의심 마디마다 PDF 해당 구간을 크롭해 빨간 박스로 표시한 HTML 저장.
-    검토자는 이 파일만 열어 의심 구간을 눈으로 확인하면 된다.
+    의심 마디마다 PDF 해당 구간(빨간 박스)과 — mxl_path가 주어지면 —
+    원본(MXL) 마디의 verovio 렌더를 나란히 담은 HTML 저장.
+    검토자는 이 파일만 열어 두 이미지를 눈으로 대조하면 된다.
     """
     import base64
+    import html as _html
     import fitz
     import cv2
+    from pathlib import Path
     from pdf_parser import _detect_staves
 
     # 페이지 이미지 캐시
@@ -342,6 +380,13 @@ def save_visual_report(pdf_path: str, result: StepDiffResult,
         zones_by_page[pno + 1] = _detect_staves(img)
     doc.close()
 
+    # 원본 마디 렌더 (의심 마디만)
+    orig_imgs: dict[int, str] = {}
+    if mxl_path:
+        orig_imgs = _render_mxl_measures(
+            mxl_path, result.part_index,
+            {s.measure for s in result.suspects})
+
     def crop_b64(page: int, system: int, x0: int, x1: int) -> str | None:
         img = pages.get(page)
         zones = zones_by_page.get(page)
@@ -356,52 +401,105 @@ def save_visual_report(pdf_path: str, result: StepDiffResult,
         cx1 = min(img.shape[1], x1 + pad)
         crop = cv2.cvtColor(img[y0:y1, cx0:cx1], cv2.COLOR_GRAY2BGR)
         cv2.rectangle(crop, (x0 - cx0 - gap, 0),
-                      (x1 - cx0 + gap, crop.shape[0] - 1), (0, 0, 255), 3)
+                      (x1 - cx0 + gap, crop.shape[0] - 1), (0, 0, 230), 3)
         ok, buf = cv2.imencode('.png', crop)
         if not ok:
             return None
         return base64.b64encode(buf.tobytes()).decode()
 
+    n_strong = sum(1 for s in result.suspects if s.strong)
+    n_weak = len(result.suspects) - n_strong
+
     rows = []
     for s in sorted(result.suspects, key=lambda s: (not s.strong, s.measure)):
-        grade = "강" if s.strong else "약"
-        detail = (f"불일치 {s.mismatch}, 누락 {s.missing}" if s.strong
-                  else f"근접차이 {s.near}")
-        img_tag = ""
+        grade_cls = "strong" if s.strong else "weak"
+        grade_txt = "강한 의심" if s.strong else "약한 의심"
+        details = []
+        if s.mismatch:
+            details.append(f"음높이 불일치 {s.mismatch}건")
+        if s.missing:
+            details.append(f"PDF에서 못 찾은 음 {s.missing}건")
+        if s.near:
+            details.append(f"반칸 차이(검출 오차 가능) {s.near}건")
+        detail = " · ".join(details) or "-"
+
+        pdf_img = orig_img = ""
+        loc = "위치 미상"
         if s.pdf_hint:
             p, sysn, x0, x1 = s.pdf_hint
+            loc = f"교과서 PDF {p}페이지 {sysn}단"
             b64 = crop_b64(p, sysn, x0, x1)
-            loc = f"PDF p{p} {sysn}단"
             if b64:
-                img_tag = f'<img src="data:image/png;base64,{b64}">'
-        else:
-            loc = "위치 미상 (마디 전체 누락)"
-        rows.append(
-            f'<div class="item {"strong" if s.strong else "weak"}">'
-            f'<h3>[{grade}] 마디 {s.measure} <small>{detail} · {loc}</small></h3>'
-            f'{img_tag}</div>')
+                pdf_img = (f'<figure><figcaption>교과서 PDF (빨간 박스 부근)'
+                           f'</figcaption>'
+                           f'<img src="data:image/png;base64,{b64}"></figure>')
+        if s.measure in orig_imgs:
+            orig_img = (f'<figure><figcaption>Finale 원본 (마디 {s.measure})'
+                        f'</figcaption><img src="data:image/png;base64,'
+                        f'{orig_imgs[s.measure]}"></figure>')
 
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>step-diff 리포트</title><style>
-body{{font-family:sans-serif;max-width:1100px;margin:20px auto;padding:0 16px}}
-.item{{border:1px solid #ccc;border-radius:6px;padding:10px;margin:12px 0}}
-.item.strong{{border-left:6px solid #d33}}
-.item.weak{{border-left:6px solid #e90}}
-.item img{{max-width:100%;border:1px solid #eee}}
-h3 small{{color:#666;font-weight:normal;font-size:0.75em}}
-.summary{{background:#f5f5f5;padding:10px;border-radius:6px}}
+        rows.append(f"""
+<section class="item {grade_cls}">
+  <header><span class="badge">{grade_txt}</span>
+    <h3>마디 {s.measure}</h3><span class="loc">{loc}</span></header>
+  <p class="detail">{_html.escape(detail)}</p>
+  <div class="pair">{orig_img}{pdf_img}</div>
+</section>""")
+
+    score_name = _html.escape(Path(pdf_path).stem)
+    html_doc = f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>채보 검토 리포트 — {score_name}</title><style>
+:root {{ --strong:#d63031; --weak:#e17055; --bg:#fafafa; }}
+* {{ box-sizing:border-box; }}
+body {{ font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  max-width:1200px; margin:0 auto; padding:24px; background:var(--bg);
+  color:#2d3436; }}
+h1 {{ font-size:1.5em; margin:0 0 4px; }}
+.sub {{ color:#636e72; margin-bottom:16px; }}
+.cards {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:24px; }}
+.card {{ background:#fff; border-radius:10px; padding:14px 20px;
+  box-shadow:0 1px 4px rgba(0,0,0,.08); min-width:130px; }}
+.card b {{ display:block; font-size:1.6em; }}
+.card.red b {{ color:var(--strong); }}
+.card.orange b {{ color:var(--weak); }}
+.item {{ background:#fff; border-radius:10px; padding:16px 20px;
+  margin:16px 0; box-shadow:0 1px 4px rgba(0,0,0,.08); }}
+.item.strong {{ border-left:6px solid var(--strong); }}
+.item.weak {{ border-left:6px solid var(--weak); }}
+.item header {{ display:flex; align-items:center; gap:10px; }}
+.item h3 {{ margin:0; font-size:1.15em; }}
+.badge {{ font-size:.75em; color:#fff; padding:3px 10px;
+  border-radius:12px; background:var(--strong); }}
+.weak .badge {{ background:var(--weak); }}
+.loc {{ color:#636e72; font-size:.85em; margin-left:auto; }}
+.detail {{ color:#636e72; margin:6px 0 12px; font-size:.9em; }}
+.pair {{ display:flex; gap:16px; flex-wrap:wrap; }}
+.pair figure {{ flex:1 1 320px; margin:0; }}
+.pair figcaption {{ font-size:.8em; color:#636e72; margin-bottom:4px; }}
+.pair img {{ width:100%; border:1px solid #dfe6e9; border-radius:6px;
+  background:#fff; }}
+.help {{ background:#fff; border-radius:10px; padding:12px 20px;
+  font-size:.85em; color:#636e72; }}
 </style></head><body>
-<h1>step-diff 채보 오류 의심 리포트</h1>
-<div class="summary">파트 {result.part_index} ·
-일치 {result.match}/{result.total_mxl} ({result.match_rate*100:.0f}%) ·
-강한 의심 {sum(1 for s in result.suspects if s.strong)}개 ·
-약한 의심 {sum(1 for s in result.suspects if not s.strong)}개</div>
-{''.join(rows) if rows else '<p>의심 마디 없음</p>'}
+<h1>채보 검토 리포트</h1>
+<div class="sub">{score_name} — MXL 파트 {result.part_index}과 비교</div>
+<div class="cards">
+  <div class="card"><b>{result.match_rate*100:.0f}%</b>일치율
+    ({result.match}/{result.total_mxl}음)</div>
+  <div class="card red"><b>{n_strong}</b>강한 의심 마디</div>
+  <div class="card orange"><b>{n_weak}</b>약한 의심 마디</div>
+</div>
+<div class="help"><b>보는 법</b> — 강한 의심(빨강)부터 확인하세요.
+왼쪽이 Finale 원본, 오른쪽이 교과서 PDF입니다. 두 이미지의 음이 같으면
+검출 오차(무시), 다르면 채보 오류입니다. 약한 의심(주황)은 한 칸 차이라
+대부분 검출 반올림 오차입니다.</div>
+{''.join(rows) if rows else '<div class="item"><h3>의심 마디 없음 🎉</h3></div>'}
 </body></html>"""
 
     with open(out_html, 'w', encoding='utf-8') as f:
-        f.write(html)
+        f.write(html_doc)
     return out_html
+
 
 if __name__ == "__main__":
     import sys
@@ -417,5 +515,5 @@ if __name__ == "__main__":
     result = compare_pdf_to_mxl(args[0], args[1], part_index=pi)
     print_report(result)
     if html_out:
-        path = save_visual_report(args[0], result, html_out)
+        path = save_visual_report(args[0], result, html_out, mxl_path=args[1])
         print(f"  시각 리포트 저장: {path}")
